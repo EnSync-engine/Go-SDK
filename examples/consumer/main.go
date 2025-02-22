@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	ensync "github.com/ensync/golang-sdk"
+	ensync "github.com/EnSync-engine/Go-SDK"
 )
 
 func main() {

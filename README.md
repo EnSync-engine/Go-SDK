@@ -15,7 +15,7 @@ This is the official Golang SDK for EnSync, providing a robust and type-safe int
 ## Installation
 
 ```bash
-go get github.com/ensync/golang-sdk
+go get github.com/EnSync-engine/Go-SDK
 ```
 
 ## Usage

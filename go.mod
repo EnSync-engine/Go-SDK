@@ -1,4 +1,4 @@
-module github.com/ensync/golang-sdk
+module github.com/EnSync-engine/Go-SDK
 
 go 1.21
 
