@@ -375,8 +375,6 @@ func (c *EnSyncClient) Publish(ctx context.Context, eventName string, payload En
 		return NewEnSyncError(err, "")
 	}
 
-	fmt.Println(string(data))
-
 	command := fmt.Sprintf("PUB;CLIENT_ID=%s;EVENT_NAME=%s;PAYLOAD=%s", c.clientId, eventName, string(data))
 	_, err = c.engine.createRequest(ctx, command, nil)
 	return err
