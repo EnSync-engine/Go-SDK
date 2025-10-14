@@ -1,0 +1,169 @@
+syntax = "proto3";
+
+option go_package = "github.com/EnSync-engine/Go-SDK/ensync/proto";
+
+package ensync;
+
+option java_multiple_files = true;
+option java_package = "io.opensink.master.grpc.ensync";
+option java_outer_classname = "EnSyncProto";
+
+// Main EnSync service for client communication
+service EnSyncService {
+  // Connection & Authentication
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // Event Publishing
+  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+  
+  // Event Subscription - Returns a stream of events
+  rpc Subscribe(SubscribeRequest) returns (stream EventStreamResponse);
+  rpc Unsubscribe(UnsubscribeRequest) returns (UnsubscribeResponse);
+  
+  // Event Management
+  rpc AcknowledgeEvent(AcknowledgeRequest) returns (AcknowledgeResponse);
+  rpc DeferEvent(DeferRequest) returns (DeferResponse);
+  rpc DiscardEvent(DiscardRequest) returns (DiscardResponse);
+  rpc ReplayEvent(ReplayRequest) returns (ReplayResponse);
+  
+  // Flow Control
+  rpc PauseEvents(PauseRequest) returns (PauseResponse);
+  rpc ContinueEvents(ContinueRequest) returns (ContinueResponse);
+}
+
+// Connection Messages
+message ConnectRequest {
+  string access_key = 1;
+}
+
+message ConnectResponse {
+  bool success = 1;
+  string client_id = 2;
+  string client_hash = 3;
+  map<string, string> server_config = 4;
+  string error_message = 5;
+}
+
+message HeartbeatRequest {
+  string client_id = 1;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+}
+
+// Event Publishing Messages
+message PublishEventRequest {
+  string client_id = 1;
+  string event_name = 2;
+  string payload = 3;
+  string delivery_to = 4;
+  string metadata = 5;
+  optional string payload_metadata = 6;
+}
+
+message PublishEventResponse {
+  bool success = 1;
+  string event_idem = 2;
+  string error_message = 3;
+}
+
+// Event Subscription Messages
+message SubscribeRequest {
+  string client_id = 1;
+  string event_name = 2;
+}
+
+message UnsubscribeRequest {
+  string client_id = 1;
+  string event_name = 2;
+}
+
+message UnsubscribeResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message EventStreamResponse {
+  string event_idem = 1;
+  string event_name = 2;
+  string payload = 3;
+  int64 partition_block = 4;
+  string metadata = 5;
+  string sender = 6;
+}
+
+// Event Management Messages
+message AcknowledgeRequest {
+  string client_id = 1;
+  string event_idem = 2;
+  string event_name = 3;
+  int64 partition_block = 4;
+}
+
+message AcknowledgeResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message DeferRequest {
+  string client_id = 1;
+  string event_idem = 2;
+  string event_name = 3;
+  int64 delay_ms = 4;
+  int32 priority = 5;
+  string reason = 6;
+}
+
+message DeferResponse {
+  bool success = 1;
+  string message = 2;
+  int64 delivery_time = 3;
+}
+
+message DiscardRequest {
+  string client_id = 1;
+  string event_idem = 2;
+  string event_name = 3;
+  string reason = 4;
+}
+
+message DiscardResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ReplayRequest {
+  string client_id = 1;
+  string event_idem = 2;
+  string event_name = 3;
+}
+
+message ReplayResponse {
+  bool success = 1;
+  string message = 2;
+  string event_data = 3;
+}
+
+// Flow Control Messages
+message PauseRequest {
+  string client_id = 1;
+  string event_name = 2;
+  string reason = 3;
+}
+
+message PauseResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ContinueRequest {
+  string client_id = 1;
+  string event_name = 2;
+}
+
+message ContinueResponse {
+  bool success = 1;
+  string message = 2;
+}
