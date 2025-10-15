@@ -32,19 +32,23 @@ Create a file named `main.go`:
 package main
 
 import (
+    "context"
     "log"
-    ensync "github.com/EnSync-engine/Go-SDK"
+    
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
 )
 
 func main() {
-    // Create engine
-    engine, err := ensync.NewGRPCEngine("grpc://localhost:50051")
+    ctx := context.Background()
+    
+    // Create engine - establishes gRPC connection
+    engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051")
     if err != nil {
         log.Fatal(err)
     }
     defer engine.Close()
 
-    // Authenticate
+    // Authenticate with EnSync protocol
     err = engine.CreateClient("your-access-key")
     if err != nil {
         log.Fatal(err)
@@ -68,14 +72,21 @@ go run main.go
 package main
 
 import (
+    "context"
     "log"
-    ensync "github.com/EnSync-engine/Go-SDK"
+    
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
 )
 
 func main() {
-    engine, _ := ensync.NewGRPCEngine("grpc://localhost:50051")
+    ctx := context.Background()
+    
+    // Create engine - establishes gRPC connection
+    engine, _ := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051")
     defer engine.Close()
     
+    // Authenticate with EnSync protocol
     engine.CreateClient("your-access-key")
     
     // Publish an event
@@ -105,31 +116,37 @@ func main() {
 package main
 
 import (
+    "context"
     "log"
     "os"
     "os/signal"
     "syscall"
     
-    ensync "github.com/EnSync-engine/Go-SDK"
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
 )
 
 func main() {
-    engine, _ := ensync.NewGRPCEngine("grpc://localhost:50051")
+    ctx := context.Background()
+    
+    // Create engine - establishes gRPC connection
+    engine, _ := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051")
     defer engine.Close()
     
+    // Authenticate with EnSync protocol
     engine.CreateClient("your-access-key")
     
     // Subscribe to events
     subscription, err := engine.Subscribe(
         "myapp/user/created",
-        &ensync.SubscribeOptions{AutoAck: true},
+        &common.SubscribeOptions{AutoAck: true},
     )
     if err != nil {
         log.Fatal(err)
     }
     
     // Handle events
-    subscription.AddHandler(func(event *ensync.EventPayload) error {
+    subscription.AddHandler(func(event *common.EventPayload) error {
         log.Printf("New user created!")
         log.Printf("User ID: %v", event.Payload["userId"])
         log.Printf("Email: %v", event.Payload["email"])
@@ -167,11 +184,18 @@ log.Printf("My public key: %s", publicKey)
 ### gRPC (Recommended for Servers)
 
 ```go
+import (
+    "context"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
+)
+
+ctx := context.Background()
+
 // Insecure (development)
-engine, _ := ensync.NewGRPCEngine("grpc://localhost:50051")
+engine, _ := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051")
 
 // Secure (production)
-engine, _ := ensync.NewGRPCEngine("grpcs://node.ensync.cloud:50051")
+engine, _ := ensync.NewGRPCEngine(ctx, "grpcs://node.ensync.cloud:50051")
 ```
 
 **Best for:**
@@ -182,11 +206,18 @@ engine, _ := ensync.NewGRPCEngine("grpcs://node.ensync.cloud:50051")
 ### WebSocket (Great for Real-time)
 
 ```go
+import (
+    "context"
+    ensync "github.com/EnSync-engine/Go-SDK/websocket"
+)
+
+ctx := context.Background()
+
 // Insecure (development)
-engine, _ := ensync.NewWebSocketEngine("ws://localhost:8082")
+engine, _ := ensync.NewWebSocketEngine(ctx, "ws://localhost:8082")
 
 // Secure (production)
-engine, _ := ensync.NewWebSocketEngine("wss://node.ensync.cloud:8082")
+engine, _ := ensync.NewWebSocketEngine(ctx, "wss://node.ensync.cloud:8082")
 ```
 
 **Best for:**
@@ -208,7 +239,7 @@ eventID, _ := engine.Publish(
 )
 
 // Subscriber
-subscription.AddHandler(func(event *ensync.EventPayload) error {
+subscription.AddHandler(func(event *common.EventPayload) error {
     requestId := event.Payload["requestId"]
     
     // Process request and send response
@@ -241,14 +272,14 @@ eventID, _ := engine.Publish(
     recipients,
     map[string]interface{}{"message": "Hello everyone!"},
     nil,
-    &ensync.PublishOptions{UseHybridEncryption: true}, // Efficient for multiple recipients
+    &common.PublishOptions{UseHybridEncryption: true}, // Efficient for multiple recipients
 )
 ```
 
 ### Pattern 3: Event Processing with Retry
 
 ```go
-subscription.AddHandler(func(event *ensync.EventPayload) error {
+subscription.AddHandler(func(event *common.EventPayload) error {
     // Try to process
     if err := processEvent(event); err != nil {
         // Defer for retry in 5 seconds
@@ -267,7 +298,7 @@ subscription.AddHandler(func(event *ensync.EventPayload) error {
 var failureCount int
 var maxFailures = 5
 
-subscription.AddHandler(func(event *ensync.EventPayload) error {
+subscription.AddHandler(func(event *common.EventPayload) error {
     if failureCount >= maxFailures {
         // Pause processing
         subscription.Pause("Too many failures")
@@ -305,22 +336,101 @@ export ENSYNC_APP_SECRET="your-app-secret"
 ```
 
 ```go
-import "os"
+import (
+    "context"
+    "os"
+    
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
+)
 
-engine, _ := ensync.NewGRPCEngine(os.Getenv("ENSYNC_URL"))
+ctx := context.Background()
+engine, _ := ensync.NewGRPCEngine(ctx, os.Getenv("ENSYNC_URL"))
 engine.CreateClient(
     os.Getenv("ENSYNC_ACCESS_KEY"),
-    ensync.WithAppSecretKey(os.Getenv("ENSYNC_APP_SECRET")),
+    common.WithAppSecretKey(os.Getenv("ENSYNC_APP_SECRET")),
 )
 ```
 
 ### Custom Configuration
 
+#### Basic Configuration
+
 ```go
+import (
+    "context"
+    "time"
+    
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
+)
+
+ctx := context.Background()
 engine, _ := ensync.NewGRPCEngine(
+    ctx,
     "grpc://localhost:50051",
-    ensync.WithHeartbeatInterval(30 * time.Second),
-    ensync.WithMaxReconnectAttempts(5),
+    common.WithMaxReconnectAttempts(10),
+    common.WithReconnectDelay(3 * time.Second),
+)
+```
+
+#### Advanced Configuration
+
+```go
+import (
+    "context"
+    "time"
+    
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
+)
+
+ctx := context.Background()
+engine, _ := ensync.NewGRPCEngine(
+    ctx,
+    "grpc://localhost:50051",
+    // Reconnection settings
+    common.WithMaxReconnectAttempts(10),
+    common.WithReconnectDelay(2 * time.Second),
+    common.WithAutoReconnect(true),
+    
+    // Circuit breaker - pause after 5 failures for 30 seconds
+    common.WithCircuitBreaker(5, 30 * time.Second),
+    
+    // Retry logic - 3 attempts with exponential backoff
+    common.WithRetryConfig(3, time.Second, 10 * time.Second, 0.1),
+    
+    // Custom logger (implement common.Logger interface)
+    // common.WithLogger(myCustomLogger),
+)
+
+// Client authentication with options
+engine.CreateClient(
+    "your-access-key",
+    common.WithAppSecretKey("your-app-secret"),
+    common.WithClientID("my-service-v1"),
+)
+```
+
+#### WebSocket Configuration
+
+```go
+import (
+    "context"
+    "time"
+    
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/websocket"
+)
+
+ctx := context.Background()
+engine, _ := ensync.NewWebSocketEngine(
+    ctx,
+    "ws://localhost:8082",
+    // Same common options as gRPC
+    common.WithMaxReconnectAttempts(5),
+    common.WithReconnectDelay(2 * time.Second),
+    common.WithCircuitBreaker(3, 20 * time.Second),
 )
 ```
 
@@ -342,7 +452,7 @@ log.SetFlags(log.LstdFlags | log.Lshortfile)
 ```go
 err := engine.CreateClient(accessKey)
 if err != nil {
-    if ensyncErr, ok := err.(*ensync.EnSyncError); ok {
+    if ensyncErr, ok := err.(*common.EnSyncError); ok {
         log.Printf("Error type: %s", ensyncErr.Type)
         log.Printf("Error message: %s", ensyncErr.Message)
     }

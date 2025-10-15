@@ -3,33 +3,48 @@
 ```
 Go-SDK/
 │
-├── 📄 Core Go Files (2,400+ lines)
-│   ├── errors.go              # Error types and handling (60 lines)
-│   ├── crypto.go              # Encryption/decryption utilities (380 lines)
-│   ├── types.go               # Core types and interfaces (150 lines)
-│   ├── grpc_client.go         # gRPC client implementation (850 lines)
-│   ├── websocket_client.go    # WebSocket client implementation (750 lines)
-│   └── example_test.go        # Example usage tests (200 lines)
+├── � common/                  # Shared utilities and types
+│   ├── base_engine.go          # Base engine functionality
+│   ├── circuit_breaker.go      # Circuit breaker implementation
+│   ├── crypto.go              # Encryption/decryption utilities
+│   ├── errors.go              # Error types and handling
+│   ├── logger.go              # Logging utilities
+│   ├── options.go             # Configuration options
+│   ├── retry.go               # Retry logic
+│   ├── subscription.go        # Subscription management
+│   └── types.go               # Core types and interfaces
+│
+├── 📁 grpc/                   # gRPC transport implementation
+│   ├── engine.go              # gRPC engine
+│   └── options.go             # gRPC-specific options
+│
+├── 📁 websocket/              # WebSocket transport implementation
+│   ├── engine.go              # WebSocket engine
+│   └── options.go             # WebSocket-specific options
+│
+├── 📁 proto/                  # Protocol buffer definitions
+│   ├── ensync.proto           # Protocol definitions
+│   ├── ensync.pb.go           # Generated Go code
+│   └── ensync_grpc.pb.go      # Generated gRPC code
+│
+├── 📄 example_test.go          # Example usage tests
 │
 ├── 📚 Documentation
 │   ├── README.md              # User documentation
 │   ├── QUICKSTART.md          # Quick start guide
+│   ├── GETTING_STARTED.md     # Comprehensive beginner's guide 
+│   ├── INDEX.md               # Documentation navigation
 │   ├── DESIGN.md              # Design decisions and patterns
 │   ├── CONTRIBUTING.md        # Contribution guidelines
-│   ├── PORTING_SUMMARY.md     # Detailed porting notes
-│   ├── PROJECT_SUMMARY.md     # Project completion summary
 │   ├── CHANGELOG.md           # Version history
+│   └── FILE_STRUCTURE.md      # This file
 │
 ├── 🔧 Configuration Files
 │   ├── go.mod                 # Go module definition
+│   ├── go.sum                 # Go checksum file
 │   ├── Makefile               # Build automation
 │   ├── generate.sh            # gRPC code generation script
-│   ├── .gitignore             # Git ignore rules
 │   └── LICENSE                # ISC License
-│
-├── 📦 Protocol Buffers
-│   └── proto/
-│       └── ensync.proto       # gRPC service definitions
 │
 └── 💡 Examples
     ├── grpc_publisher/
@@ -44,14 +59,36 @@ Go-SDK/
 
 ### 🎯 Core Implementation
 
+#### Common Package
 | File | Purpose | Dependencies |
 |------|---------|--------------|
-| `errors.go` | Error handling | Standard library |
-| `crypto.go` | Encryption | `golang.org/x/crypto` |
-| `types.go` | Interfaces & types | Standard library |
-| `grpc_client.go` | gRPC client | `google.golang.org/grpc` |
-| `websocket_client.go` | WebSocket client | `github.com/gorilla/websocket` |
-| `example_test.go` | Examples | Core files |
+| `common/errors.go` | Error handling | Standard library |
+| `common/crypto.go` | Encryption | `golang.org/x/crypto` |
+| `common/types.go` | Interfaces & types | Standard library |
+| `common/base_engine.go` | Base engine functionality | Standard library |
+| `common/circuit_breaker.go` | Circuit breaker | Standard library |
+| `common/logger.go` | Logging utilities | `go.uber.org/zap` |
+| `common/options.go` | Configuration options | Standard library |
+| `common/retry.go` | Retry logic | Standard library |
+| `common/subscription.go` | Subscription management | Standard library |
+
+#### Transport Implementations
+| File | Purpose | Dependencies |
+|------|---------|--------------|
+| `grpc/engine.go` | gRPC engine | `google.golang.org/grpc` |
+| `grpc/options.go` | gRPC options | Standard library |
+| `websocket/engine.go` | WebSocket engine | `github.com/gorilla/websocket` |
+| `websocket/options.go` | WebSocket options | Standard library |
+
+#### Protocol Buffers
+| File | Purpose | Dependencies |
+|------|---------|--------------|
+| `proto/ensync.proto` | Protocol definitions | - |
+
+#### Tests & Examples
+| File | Purpose | Dependencies |
+|------|---------|--------------|
+| `example_test.go` | Examples | All packages |
 
 ### 📖 Documentation
 
@@ -60,10 +97,10 @@ Go-SDK/
 |------|---------|----------|
 | `README.md` | Main documentation | End users |
 | `QUICKSTART.md` | Quick start guide | New users |
+| `GETTING_STARTED.md` | Comprehensive guide | Beginners |
+| `INDEX.md` | Documentation navigation | All users |
 | `DESIGN.md` | Design decisions | Developers |
 | `CONTRIBUTING.md` | Contribution guide | Contributors |
-| `PORTING_SUMMARY.md` | Porting details | Developers |
-| `PROJECT_SUMMARY.md` | Project overview | All |
 | `CHANGELOG.md` | Version history | All |
 | `FILE_STRUCTURE.md` | This file | All |
 
@@ -72,9 +109,9 @@ Go-SDK/
 | File | Purpose |
 |------|---------|
 | `go.mod` | Go module definition |
+| `go.sum` | Go checksum file |
 | `Makefile` | Build automation |
 | `generate.sh` | gRPC code generation |
-| `.gitignore` | Git ignore rules |
 | `LICENSE` | ISC License |
 
 ### 🎨 Examples
@@ -90,61 +127,79 @@ Go-SDK/
 ### Package Structure
 
 ```
-ensync (main package)
-├── Public API
+Go-SDK/
+├── common/ (shared utilities)
 │   ├── Engine interface
-│   ├── Subscription interface
-│   ├── NewGRPCEngine()
-│   ├── NewWebSocketEngine()
-│   └── Error types
+│   ├── Subscription interface  
+│   ├── Error types
+│   ├── Crypto functions
+│   ├── Retry logic
+│   ├── Circuit breaker
+│   ├── Logger utilities
+│   └── Configuration options
 │
-├── gRPC Implementation
-│   ├── GRPCEngine struct
-│   ├── grpcSubscription struct
-│   └── Helper functions
+├── grpc/ (gRPC transport)
+│   ├── GRPCEngine implementation
+│   ├── gRPC-specific options
+│   └── Protocol buffer integration
 │
-├── WebSocket Implementation
-│   ├── WebSocketEngine struct
-│   ├── wsSubscription struct
-│   └── Helper functions
+├── websocket/ (WebSocket transport)
+│   ├── WebSocketEngine implementation
+│   ├── WebSocket-specific options
+│   └── Message handling
 │
-└── Shared Utilities
-    ├── Crypto functions
-    ├── Error handling
-    └── Type definitions
+└── proto/ (generated code)
+    ├── Protocol definitions
+    └── Generated gRPC code
 ```
 
 ### Dependency Graph
 
 ```
 examples/
-    └─> ensync (core package)
-            ├─> google.golang.org/grpc
-            ├─> github.com/gorilla/websocket
-            ├─> golang.org/x/crypto
-            └─> google.golang.org/protobuf
+    ├─> github.com/EnSync-engine/Go-SDK/grpc
+    ├─> github.com/EnSync-engine/Go-SDK/websocket
+    └─> github.com/EnSync-engine/Go-SDK/common
+
+grpc/
+    ├─> github.com/EnSync-engine/Go-SDK/common
+    ├─> github.com/EnSync-engine/Go-SDK/proto
+    ├─> google.golang.org/grpc
+    └─> google.golang.org/protobuf
+
+websocket/
+    ├─> github.com/EnSync-engine/Go-SDK/common  
+    └─> github.com/gorilla/websocket
+
+common/
+    ├─> golang.org/x/crypto
+    └─> go.uber.org/zap
 ```
 
 ## Key Files by Use Case
 
 ### Getting Started
 1. `QUICKSTART.md` - Start here
-2. `README.md` - Full documentation
-3. `examples/grpc_subscriber/main.go` - Working example
+2. `GETTING_STARTED.md` - Comprehensive guide
+3. `README.md` - Full documentation
+4. `INDEX.md` - Documentation navigation
+5. `examples/grpc_subscriber/main.go` - Working example
 
 ### Understanding Design
 1. `DESIGN.md` - Design patterns
-3. `types.go` - Core interfaces
+2. `common/types.go` - Core interfaces
+3. `common/base_engine.go` - Base functionality
 
 ### Contributing
 1. `CONTRIBUTING.md` - Guidelines
 2. `Makefile` - Build commands
-3. `PROJECT_SUMMARY.md` - Project overview
+3. `CHANGELOG.md` - Version history
 
 ### Implementation
-1. `grpc_client.go` - gRPC implementation
-2. `websocket_client.go` - WebSocket implementation
-3. `crypto.go` - Encryption utilities
+1. `grpc/engine.go` - gRPC implementation
+2. `websocket/engine.go` - WebSocket implementation
+3. `common/crypto.go` - Encryption utilities
+4. `common/subscription.go` - Subscription management
 
 ## Build Artifacts (Generated)
 
@@ -167,10 +222,16 @@ coverage.html
 ## Import Paths
 
 ```go
-// Main package
-import ensync "github.com/EnSync-engine/Go-SDK"
+// Common utilities and types
+import "github.com/EnSync-engine/Go-SDK/common"
 
-// Protocol buffers (after generation)
+// gRPC engine
+import ensync "github.com/EnSync-engine/Go-SDK/grpc"
+
+// WebSocket engine  
+import ensync "github.com/EnSync-engine/Go-SDK/websocket"
+
+// Protocol buffers (generated code)
 import pb "github.com/EnSync-engine/Go-SDK/proto"
 ```
 
@@ -180,43 +241,50 @@ import pb "github.com/EnSync-engine/Go-SDK/proto"
 go.mod
   └─> Defines module and dependencies
 
-errors.go
-  └─> Used by all implementation files
+common/
+  ├─> errors.go (used by all implementation files)
+  ├─> crypto.go (used by engine implementations)
+  ├─> types.go (defines interfaces)
+  ├─> base_engine.go (shared engine functionality)
+  ├─> subscription.go (subscription management)
+  ├─> circuit_breaker.go (reliability)
+  ├─> retry.go (retry logic)
+  ├─> logger.go (logging utilities)
+  └─> options.go (configuration)
 
-crypto.go
-  └─> Used by grpc_client.go and websocket_client.go
-
-types.go
-  ├─> Defines interfaces implemented by:
-  │   ├─> grpc_client.go (Engine, Subscription)
-  │   └─> websocket_client.go (Engine, Subscription)
-  └─> Used by all files
-
-grpc_client.go
-  ├─> Imports: types.go, errors.go, crypto.go
+grpc/
+  ├─> engine.go (imports common/*)
+  ├─> options.go (gRPC-specific config)
   └─> Uses: proto/ensync.proto (generated code)
 
-websocket_client.go
-  ├─> Imports: types.go, errors.go, crypto.go
+websocket/
+  ├─> engine.go (imports common/*)
+  ├─> options.go (WebSocket-specific config)
   └─> Uses: github.com/gorilla/websocket
 
+proto/
+  ├─> ensync.proto (protocol definitions)
+  ├─> ensync.pb.go (generated)
+  └─> ensync_grpc.pb.go (generated)
+
 example_test.go
-  └─> Imports: all core files
+  └─> Imports: grpc/, websocket/, common/
 
 examples/*/main.go
-  └─> Imports: ensync package
+  └─> Imports: grpc/ or websocket/ + common/
 ```
 
 ## Maintenance Guide
 
 ### To Add a New Feature
 
-1. Update interfaces in `types.go`
-2. Implement in `grpc_client.go` and/or `websocket_client.go`
-3. Add tests in `example_test.go`
-4. Update `README.md`
-5. Add example in `examples/`
-6. Update `CHANGELOG.md`
+1. Update interfaces in `common/types.go`
+2. Update base functionality in `common/base_engine.go` if needed
+3. Implement in `grpc/engine.go` and/or `websocket/engine.go`
+4. Add tests in `example_test.go`
+5. Update `README.md` and `QUICKSTART.md`
+6. Add example in `examples/`
+7. Update `CHANGELOG.md`
 
 ### To Fix a Bug
 
@@ -238,9 +306,11 @@ examples/*/main.go
 ### Most Important Files
 
 1. **`README.md`** - Start here for usage
-2. **`types.go`** - Core interfaces
-3. **`grpc_client.go`** - Main gRPC implementation
-4. **`QUICKSTART.md`** - Quick start guide
+2. **`QUICKSTART.md`** - Quick start guide  
+3. **`INDEX.md`** - Documentation navigation
+4. **`common/types.go`** - Core interfaces
+5. **`grpc/engine.go`** - Main gRPC implementation
+6. **`websocket/engine.go`** - Main WebSocket implementation
 
 ### Build Commands
 

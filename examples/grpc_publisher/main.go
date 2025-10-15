@@ -4,18 +4,23 @@ import (
 	"context"
 	"log"
 
-	ensync "github.com/EnSync-engine/Go-SDK"
+	"github.com/EnSync-engine/Go-SDK/common"
+	ensync "github.com/EnSync-engine/Go-SDK/grpc"
 )
 
 func main() {
 	ctx := context.Background()
-	
+
 	// Create a new gRPC engine
 	engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051")
 	if err != nil {
 		log.Fatalf("Failed to create engine: %v", err)
 	}
-	defer engine.Close()
+	defer func() {
+		if err := engine.Close(); err != nil {
+			log.Printf("Failed to close engine: %v", err)
+		}
+	}()
 
 	// Create and authenticate client
 	err = engine.CreateClient("your-access-key")
@@ -33,7 +38,7 @@ func main() {
 		"timestamp":     1234567890,
 	}
 
-	metadata := &ensync.EventMetadata{
+	metadata := &common.EventMetadata{
 		Persist: true,
 		Headers: map[string]string{
 			"source": "pos-system",

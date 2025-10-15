@@ -31,7 +31,7 @@ package main
 
 import (
     "log"
-    ensync "github.com/EnSync-engine/Go-SDK"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
 )
 
 func main() {
@@ -74,7 +74,7 @@ package main
 
 import (
     "log"
-    ensync "github.com/EnSync-engine/Go-SDK"
+    ensync "github.com/EnSync-engine/Go-SDK/websocket"
 )
 
 func main() {
@@ -355,7 +355,7 @@ package main
 
 import (
     "log"
-    ensync "github.com/EnSync-engine/Go-SDK"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
 )
 
 func main() {
@@ -400,7 +400,7 @@ import (
     "os/signal"
     "syscall"
     
-    ensync "github.com/EnSync-engine/Go-SDK"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
 )
 
 func main() {
@@ -459,21 +459,69 @@ func processPayment(payload map[string]interface{}) error {
 
 ## Configuration Options
 
-### gRPC Engine Options
+### Common Configuration Options
+
+Both gRPC and WebSocket engines support common configuration options:
 
 ```go
-engine, err := ensync.NewGRPCEngine("grpc://localhost:50051",
-    ensync.WithHeartbeatInterval(30 * time.Second),
-    ensync.WithMaxReconnectAttempts(5),
+import (
+    "context"
+    "time"
+    
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/grpc"
+)
+
+ctx := context.Background()
+engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051",
+    // Reconnection settings
+    common.WithMaxReconnectAttempts(10),
+    common.WithReconnectDelay(3 * time.Second),
+    common.WithAutoReconnect(true),
+    
+    // Circuit breaker settings
+    common.WithCircuitBreaker(5, 30 * time.Second), // 5 failures, 30s reset
+    
+    // Retry configuration
+    common.WithRetryConfig(3, time.Second, 10 * time.Second, 0.1), // max attempts, initial backoff, max backoff, jitter
+    
+    // Custom logger
+    common.WithLogger(customLogger),
 )
 ```
 
-### WebSocket Engine Options
+### WebSocket-Specific Options
+
+WebSocket engines have additional configuration options:
 
 ```go
-engine, err := ensync.NewWebSocketEngine("ws://localhost:8082",
-    ensync.WithPingInterval(30 * time.Second),
-    ensync.WithReconnectInterval(5 * time.Second),
+import (
+    "context"
+    "time"
+    
+    "github.com/EnSync-engine/Go-SDK/common"
+    ensync "github.com/EnSync-engine/Go-SDK/websocket"
+)
+
+ctx := context.Background()
+engine, err := ensync.NewWebSocketEngine(ctx, "ws://localhost:8082",
+    // Common options (same as above)
+    common.WithMaxReconnectAttempts(5),
+    common.WithReconnectDelay(2 * time.Second),
+    
+    // WebSocket-specific options would go here
+    // (currently using embedded common config)
+)
+```
+
+### Client Authentication Options
+
+When creating a client, you can pass additional options:
+
+```go
+err = engine.CreateClient("your-access-key",
+    common.WithAppSecretKey("your-app-secret-key"),
+    common.WithClientID("custom-client-id"),
 )
 ```
 
@@ -552,19 +600,35 @@ chmod +x generate.sh
 
 ```
 Go-SDK/
-├── crypto.go              # Encryption/decryption utilities
-├── errors.go              # Error types and handling
-├── types.go               # Core types and interfaces
-├── grpc_client.go         # gRPC client implementation
-├── websocket_client.go    # WebSocket client implementation
-├── example_test.go        # Example usage tests
-├── proto/
-│   └── ensync.proto       # Protocol buffer definitions
-├── examples/
+├── common/                # Shared utilities and types
+│   ├── base_engine.go     # Base engine functionality
+│   ├── circuit_breaker.go # Circuit breaker implementation
+│   ├── crypto.go          # Encryption/decryption utilities
+│   ├── errors.go          # Error types and handling
+│   ├── logger.go          # Logging utilities
+│   ├── options.go         # Configuration options
+│   ├── retry.go           # Retry logic
+│   ├── subscription.go    # Subscription management
+│   └── types.go           # Core types and interfaces
+├── grpc/                  # gRPC transport implementation
+│   ├── engine.go          # gRPC engine
+│   └── options.go         # gRPC-specific options
+├── websocket/             # WebSocket transport implementation
+│   ├── engine.go          # WebSocket engine
+│   └── options.go         # WebSocket-specific options
+├── proto/                 # Protocol buffer definitions
+│   ├── ensync.proto       # Protocol definitions
+│   ├── ensync.pb.go       # Generated Go code
+│   └── ensync_grpc.pb.go  # Generated gRPC code
+├── examples/              # Example applications
 │   ├── grpc_publisher/    # gRPC publisher example
 │   ├── grpc_subscriber/   # gRPC subscriber example
 │   └── websocket_example/ # WebSocket example
+├── example_test.go        # Example usage tests
 ├── go.mod                 # Go module definition
+├── go.sum                 # Go checksum file
+├── Makefile               # Build automation
+├── generate.sh            # gRPC code generation
 └── README.md              # This file
 ```
 

@@ -50,14 +50,17 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 
 ### API Reference
 - [README.md](README.md#api-reference) - Complete API documentation
-- [types.go](types.go) - Interface definitions
+- [README.md](README.md#configuration-options) - Configuration options
+- [common/types.go](common/types.go) - Main package interface and types
+- [common/options.go](common/options.go) - Configuration options
 - [example_test.go](example_test.go) - Example tests
 
-### Transport Protocols
+### Transport Protocols & Connection
 - [README.md](README.md#transport-options) - gRPC vs WebSocket
 - [GETTING_STARTED.md](GETTING_STARTED.md#-choosing-a-transport) - Transport guide
-- [grpc_client.go](grpc_client.go) - gRPC implementation
-- [websocket_client.go](websocket_client.go) - WebSocket implementation
+- [QUICKSTART.md](QUICKSTART.md#connection-and-authentication) - Two-phase connection
+- [grpc/engine.go](grpc/engine.go) - gRPC implementation
+- [websocket/engine.go](websocket/engine.go) - WebSocket implementation
 
 ### Event Management
 - [README.md](README.md#event-management) - Event operations
@@ -67,12 +70,12 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 ### Error Handling
 - [README.md](README.md#error-handling) - Error handling guide
 - [GETTING_STARTED.md](GETTING_STARTED.md#-debugging) - Debugging tips
-- [errors.go](errors.go) - Error types
+- [common/errors.go](common/errors.go) - Error types
 
 ### Security & Encryption
 - [README.md](README.md#features) - Security features
 - [GETTING_STARTED.md](GETTING_STARTED.md#-working-with-encryption) - Encryption guide
-- [crypto.go](crypto.go) - Cryptography implementation
+- [common/crypto.go](common/crypto.go) - Cryptography implementation
 
 ### Design & Architecture
 - [DESIGN.md](DESIGN.md) - Complete design documentation
@@ -85,13 +88,13 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 
 ## 🎓 Learning Paths
 
-### Path 1: Quick Start 
+### Path 1: Quick Start (15 minutes)
 1. [QUICKSTART.md](QUICKSTART.md)
-2. [examples/grpc_subscriber/main.go](examples/grpc_subscriber/main.go)
-3. [examples/grpc_publisher/main.go](examples/grpc_publisher/main.go)
+2. [examples/grpc_publisher/main.go](examples/grpc_publisher/main.go)
+3. [examples/grpc_subscriber/main.go](examples/grpc_subscriber/main.go)
 4. Build your first app
 
-### Path 2: Comprehensive Learning
+### Path 2: Comprehensive Learning (1 hour)
 1. [GETTING_STARTED.md](GETTING_STARTED.md)
 2. [README.md](README.md)
 3. [DESIGN.md](DESIGN.md)
@@ -106,7 +109,7 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 5. Source code review
 6. Build complex examples
 
-### Path 4: Contributor 
+### Path 4: Contributor (8+ hours)
 1. [README.md](README.md)
 2. [DESIGN.md](DESIGN.md)
 3. [CONTRIBUTING.md](CONTRIBUTING.md)
@@ -129,7 +132,7 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 - **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** - Project overview
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guide
 
-### Reference Documentation (2 files)
+### Reference Documentation
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history
 - **[LICENSE](LICENSE)** - ISC License
 
@@ -169,6 +172,15 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 **Understanding Design**
 → [DESIGN.md](DESIGN.md)
 
+**Configuration Options**
+→ [README.md#configuration-options](README.md#configuration-options)
+
+**Advanced Configuration**
+→ [GETTING_STARTED.md#custom-configuration](GETTING_STARTED.md#custom-configuration)
+
+**Quick Configuration**
+→ [QUICKSTART.md#configuration-options](QUICKSTART.md#configuration-options)
+
 **Contributing Code**
 → [CONTRIBUTING.md](CONTRIBUTING.md)
 
@@ -183,7 +195,7 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 ### Example Files
 - [examples/grpc_publisher/main.go](examples/grpc_publisher/main.go) - gRPC publisher
 - [examples/grpc_subscriber/main.go](examples/grpc_subscriber/main.go) - gRPC subscriber
-- [examples/websocket_example/main.go](examples/websocket_example/main.go) - WebSocket client
+- [examples/websocket_example/main.go](examples/websocket_example/main.go) - WebSocket example
 - [example_test.go](example_test.go) - Example tests
 
 ### Example Patterns
@@ -194,11 +206,15 @@ Welcome to the EnSync Go SDK documentation! This index will help you find the ri
 ## 📦 Source Code
 
 ### Core Files
-- [errors.go](errors.go) - Error handling
-- [crypto.go](crypto.go) - Encryption/decryption
-- [types.go](types.go) - Interfaces and types
-- [grpc_client.go](grpc_client.go) - gRPC implementation
-- [websocket_client.go](websocket_client.go) - WebSocket implementation
+- [ensync.go](ensync.go) - Main package interface
+- [types.go](types.go) - Shared types and interfaces
+- [common/errors.go](common/errors.go) - Error handling
+- [common/crypto.go](common/crypto.go) - Encryption/decryption
+- [common/base_engine.go](common/base_engine.go) - Shared engine functionality
+
+### Engine Implementations  
+- [grpc/engine.go](grpc/engine.go) - gRPC implementation
+- [websocket/engine.go](websocket/engine.go) - WebSocket implementation
 
 ### Configuration Files
 - [go.mod](go.mod) - Go module definition
@@ -274,6 +290,20 @@ Before contributing, make sure you've read:
 
 ---
 
+## 🆕 Recent Updates
+
+The EnSync Go SDK has been recently refactored with major improvements:
+
+- **Two-Phase Connection**: Clean separation of transport connection and EnSync authentication
+- **Improved Architecture**: Modular design with unified interfaces for gRPC and WebSocket
+- **Bug Fixes**: Critical fixes for slice pointer bugs, encryption consistency, and connection management
+- **Enhanced Documentation**: Updated guides and examples reflecting the new architecture
+- **Better Error Handling**: Comprehensive error types and improved retry logic
+
+See [CHANGELOG.md](CHANGELOG.md) for complete details.
+
+---
+
 **Happy coding!** 🚀
 
-*Last updated: 2025-10-14*
+*Last updated: 2025-10-15*
