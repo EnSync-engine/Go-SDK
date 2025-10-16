@@ -7,17 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🔒 Security & Cryptography
+- **MAJOR**: Refactored cryptographic implementation to use proven libraries
+- Replaced custom Ed25519 ↔ Curve25519 conversion with `filippo.io/edwards25519` library
+- Implemented RFC 7748 compliant hash-based private key conversion
+- Fixed authentication failures in event subscription and publishing
+- Removed dangerous custom cryptographic code in favor of standard implementations
+
+### 🧹 Code Quality
+- Fixed magic number violations by adding proper cryptographic constants
+- Removed unused `nonceSize` constant (re-added with proper usage)
+- Cleaned up legacy `ed25519PrivateKeyToCurve25519` wrapper function
+- Improved error handling for gRPC stream cancellations
+- Enhanced logging to distinguish expected context cancellations from actual errors
+
+### 🐛 Bug Fixes
+- Fixed decryption failures caused by improper key conversion
+- Resolved gRPC stream error logging format issues
+- Fixed "Stream receive error: context canceled" being logged as errors instead of info
+
+### 🧪 Testing
+- Updated all crypto tests to use proper Ed25519 key generation
+- Fixed test compatibility with library-based cryptographic functions
+- All unit tests now pass with the new implementation
+- Removed dependency on `golang.org/x/crypto/nacl/box` from tests
+
+### 📚 Documentation
+- Updated code comments to reflect library-based approach
+- Added proper error messages with context for debugging
+
 ## [0.1.2] - 2025-10-16
 
-### Fixed
-- **Module Import Issue**: Added generated protobuf files to version control to fix import errors
-- External users can now properly import the SDK without "module does not contain package" errors
-- Generated `internal/proto/*.pb.go` files are now committed to ensure module completeness
-
-### Technical
-- Removed generated protobuf files from `.gitignore` 
-- Committed `internal/proto/ensync.pb.go` and `internal/proto/ensync_grpc.pb.go` to repository
-- Ensures the internal proto package is available when SDK is used as a Go module dependency
+### Added
+- Version 0.1.2 release
 
 
 ## [0.1.1] - 2025-10-16
@@ -96,7 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Connection state management and thread safety
 - WebSocket reconnection logic and error handling
 
-[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.2...HEAD
-[0.1.2]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.1...v0.1.2
+[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/EnSync-engine/Go-SDK/releases/tag/v0.1.0

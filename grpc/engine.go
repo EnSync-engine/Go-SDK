@@ -12,8 +12,10 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/EnSync-engine/Go-SDK/common"
 	pb "github.com/EnSync-engine/Go-SDK/internal/proto"
@@ -291,9 +293,8 @@ func (e *GRPCEngine) executePublish(
 	useHybrid bool,
 ) (string, error) {
 	var responses []string
-
 	err := e.WithRetry(e.Ctx, func() error {
-		if useHybrid && len(recipients) > 1 {
+		if useHybrid {
 			return e.publishHybrid(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, &responses)
 		}
 		return e.publishIndividual(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, &responses)
@@ -697,6 +698,20 @@ func (s *grpcSubscription) listen() {
 }
 
 func (s *grpcSubscription) handleStreamError(err error) {
+	if s.engine.Ctx.Err() != nil {
+		s.engine.Logger.Info("Stream closed due to context cancellation",
+			zap.String("eventName", s.eventName))
+		return
+	}
+
+	if st, ok := status.FromError(err); ok && st.Code() == codes.Canceled {
+		s.engine.Logger.Info("Stream canceled",
+			zap.String("eventName", s.eventName),
+			zap.String("reason", st.Message()))
+		return
+	}
+
+	// Log as error only if it's not a expected cancellation
 	s.engine.Logger.Error("Stream receive error",
 		zap.String("eventName", s.eventName),
 		zap.Error(err))
@@ -756,10 +771,7 @@ func (s *grpcSubscription) callHandlers(event *common.EventPayload) {
 func (s *grpcSubscription) processEvent(event *pb.EventStreamResponse) (*common.EventPayload, error) {
 	decryptionKey := s.appSecretKey
 	if decryptionKey == "" {
-		decryptionKey = s.engine.AccessKey
-	}
-
-	if decryptionKey == "" {
+		s.engine.Logger.Error("No decryption key available")
 		return nil, common.NewEnSyncError("no decryption key available", common.ErrTypeSubscription, nil)
 	}
 
@@ -774,23 +786,26 @@ func (s *grpcSubscription) processEvent(event *pb.EventStreamResponse) (*common.
 		return nil, common.NewEnSyncError("failed to parse encrypted payload", common.ErrTypeSubscription, err)
 	}
 
-	var payloadStr string
 	keyBytes, err := base64.StdEncoding.DecodeString(decryptionKey)
 	if err != nil {
 		return nil, common.NewEnSyncError("failed to decode decryption key", common.ErrTypeSubscription, err)
 	}
 
+	var payloadStr string
+
 	switch v := encryptedPayload.(type) {
 	case *common.HybridEncryptedMessage:
 		payloadStr, err = common.DecryptHybridMessage(v, keyBytes)
+		if err != nil {
+			return nil, common.NewEnSyncError("hybrid decryption failed", common.ErrTypeSubscription, err)
+		}
 	case *common.EncryptedMessage:
 		payloadStr, err = common.DecryptEd25519(v, keyBytes)
+		if err != nil {
+			return nil, common.NewEnSyncError("ed25519 decryption failed", common.ErrTypeSubscription, err)
+		}
 	default:
 		return nil, common.NewEnSyncError("unknown encrypted payload type: "+fmt.Sprintf("%T", v), common.ErrTypeSubscription, nil)
-	}
-
-	if err != nil {
-		return nil, common.NewEnSyncError("decryption failed", common.ErrTypeSubscription, err)
 	}
 
 	var payload map[string]interface{}
@@ -911,9 +926,4 @@ func (e *GRPCEngine) Close() error {
 
 	e.Logger.Info("gRPC engine shutdown complete")
 	return nil
-}
-
-// AnalyzePayload analyzes a payload and returns metadata
-func (e *GRPCEngine) AnalyzePayload(payload map[string]interface{}) *common.PayloadMetadata {
-	return common.AnalyzePayload(payload)
 }

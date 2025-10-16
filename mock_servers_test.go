@@ -1,4 +1,4 @@
-package ensync
+package main
 
 import (
 	"context"
@@ -60,7 +60,6 @@ func (m *SimpleMockGRPCServer) PublishEvent(ctx context.Context, req *pb.Publish
 }
 
 func (m *SimpleMockGRPCServer) Subscribe(req *pb.SubscribeRequest, stream pb.EnSyncService_SubscribeServer) error {
-	// Just keep the stream open and don't send events to avoid complexity
 	<-stream.Context().Done()
 	return nil
 }
@@ -111,10 +110,8 @@ func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 
-	// Test basic publish with a valid Ed25519 public key
 	eventName := "test/payment/created"
 
-	// Generate a real Ed25519 key pair for testing
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key: %v", err)

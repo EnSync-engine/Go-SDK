@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"golang.org/x/crypto/nacl/box"
 )
 
 const (
@@ -17,14 +15,13 @@ const (
 )
 
 func TestEd25519PublicKeyToCurve25519(t *testing.T) {
-	// Test with valid 32-byte key
-	validKey := make([]byte, 32)
-	_, err := rand.Read(validKey)
+	// Test with valid Ed25519 public key
+	publicKey, _, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate test key: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
 
-	curve25519Key, err := ed25519PublicKeyToCurve25519(validKey)
+	curve25519Key, err := ed25519PublicKeyToCurve25519(publicKey)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
@@ -50,13 +47,13 @@ func TestEd25519PublicKeyToCurve25519(t *testing.T) {
 }
 
 func TestEd25519SecretKeyToCurve25519(t *testing.T) {
-	validKey32 := make([]byte, 32)
-	_, err := rand.Read(validKey32)
+	// Test with valid Ed25519 private key (64 bytes)
+	_, privateKey, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate test key: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
 
-	curve25519Key, err := ed25519SecretKeyToCurve25519(validKey32)
+	curve25519Key, err := ed25519SecretKeyToCurve25519(privateKey)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
@@ -64,13 +61,9 @@ func TestEd25519SecretKeyToCurve25519(t *testing.T) {
 		t.Errorf("Expected key length 32, got: %d", len(curve25519Key))
 	}
 
-	validKey64 := make([]byte, 64)
-	_, err = rand.Read(validKey64)
-	if err != nil {
-		t.Fatalf("Failed to generate test key: %v", err)
-	}
-
-	curve25519Key, err = ed25519SecretKeyToCurve25519(validKey64)
+	// Test with 32-byte seed (first 32 bytes of Ed25519 private key)
+	seed := privateKey[:32]
+	curve25519Key, err = ed25519SecretKeyToCurve25519(seed)
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
@@ -89,14 +82,11 @@ func TestEd25519SecretKeyToCurve25519(t *testing.T) {
 }
 
 func TestEncryptDecryptEd25519(t *testing.T) {
-	publicKey, privateKey, err := box.GenerateKey(rand.Reader)
+	// Generate proper Ed25519 key pair
+	ed25519PublicKey, ed25519PrivateKey, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate key pair: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
-
-	ed25519PublicKey := publicKey[:]
-	ed25519PrivateKey := make([]byte, 64)
-	copy(ed25519PrivateKey, privateKey[:])
 
 	message := testMessageHello
 
@@ -150,8 +140,8 @@ func TestEncryptEd25519InvalidKey(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for invalid public key, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed to convert public key") {
-		t.Errorf("Expected key conversion error, got: %v", err)
+	if !strings.Contains(err.Error(), "invalid public key length") {
+		t.Errorf("Expected key length error, got: %v", err)
 	}
 }
 
@@ -281,16 +271,11 @@ func TestDecryptWithMessageKeyInvalidKey(t *testing.T) {
 }
 
 func TestEncryptDecryptMessageKey(t *testing.T) {
-	// Generate Curve25519 key pair directly for testing
-	publicKey, privateKey, err := box.GenerateKey(rand.Reader)
+	// Generate proper Ed25519 key pair
+	ed25519PublicKey, ed25519PrivateKey, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate key pair: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
-
-	// Convert to Ed25519-like format (use raw bytes)
-	ed25519PublicKey := publicKey[:]
-	ed25519PrivateKey := make([]byte, 64)
-	copy(ed25519PrivateKey, privateKey[:])
 
 	// Generate a message key
 	messageKey, err := GenerateMessageKey()
@@ -327,23 +312,15 @@ func TestEncryptDecryptMessageKey(t *testing.T) {
 }
 
 func TestHybridEncryptDecrypt(t *testing.T) {
-	publicKey1, privateKey1, err := box.GenerateKey(rand.Reader)
+	// Generate proper Ed25519 key pairs
+	ed25519PublicKey1, ed25519PrivateKey1, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate key pair 1: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair 1: %v", err)
 	}
-	publicKey2, privateKey2, err := box.GenerateKey(rand.Reader)
+	ed25519PublicKey2, ed25519PrivateKey2, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate key pair 2: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair 2: %v", err)
 	}
-
-	// Convert to Ed25519-like format (use raw bytes)
-	ed25519PublicKey1 := publicKey1[:]
-	ed25519PrivateKey1 := make([]byte, 64)
-	copy(ed25519PrivateKey1, privateKey1[:])
-
-	ed25519PublicKey2 := publicKey2[:]
-	ed25519PrivateKey2 := make([]byte, 64)
-	copy(ed25519PrivateKey2, privateKey2[:])
 
 	message := "This is a test message for hybrid encryption"
 	recipientPublicKeys := []string{
@@ -401,23 +378,20 @@ func TestHybridEncryptInvalidPublicKey(t *testing.T) {
 }
 
 func TestDecryptHybridMessageNoValidKeys(t *testing.T) {
-	_, privateKey, err := box.GenerateKey(rand.Reader)
+	// Generate proper Ed25519 key pairs
+	_, ed25519PrivateKey, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate key pair: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
 
-	otherPublicKey, _, err := box.GenerateKey(rand.Reader)
+	otherPublicKey, _, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate other key pair: %v", err)
+		t.Fatalf("Failed to generate other Ed25519 key pair: %v", err)
 	}
-
-	// Convert to Ed25519-like format
-	ed25519PrivateKey := make([]byte, 64)
-	copy(ed25519PrivateKey, privateKey[:])
 
 	// Create a message encrypted for the other key
 	message := testMessage
-	recipientPublicKeys := []string{base64.StdEncoding.EncodeToString(otherPublicKey[:])}
+	recipientPublicKeys := []string{base64.StdEncoding.EncodeToString(otherPublicKey)}
 	hybridMsg, err := HybridEncrypt(message, recipientPublicKeys)
 	if err != nil {
 		t.Fatalf("Failed to create hybrid message: %v", err)
@@ -504,18 +478,13 @@ func TestParseEncryptedPayload(t *testing.T) {
 }
 
 func TestEncryptionRoundTripWithRealKeys(t *testing.T) {
-	// Generate real Curve25519 key pair using box package
-	publicKey, privateKey, err := box.GenerateKey(rand.Reader)
+	// Generate proper Ed25519 key pair
+	ed25519PublicKey, ed25519PrivateKey, err := GenerateEd25519KeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate box key pair: %v", err)
+		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
 
 	message := "Real encryption test"
-
-	// Convert to Ed25519-like format (32 bytes)
-	ed25519PublicKey := publicKey[:]
-	ed25519PrivateKey := make([]byte, 64)
-	copy(ed25519PrivateKey, privateKey[:])
 
 	// Test encryption and decryption
 	encrypted, err := EncryptEd25519(message, ed25519PublicKey)

@@ -17,9 +17,20 @@ vendor/
 # Go workspace file
 go.work
 
-# Generated protobuf files are now committed for module consumers
-# internal/proto/*.pb.go
-# internal/proto/*_grpc.pb.go
+# Go build output
+Go-SDK
+main
+ensync
+/Go-SDK
+/main
+/ensync
+
+
+# Any binary with the project name
+**/Go-SDK
+**/main
+**/ensync
+
 
 # IDE specific files
 .idea/
@@ -36,3 +47,4 @@ Thumbs.db
 bin/
 dist/
 build/
+main.go

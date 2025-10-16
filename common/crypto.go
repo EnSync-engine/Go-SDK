@@ -1,12 +1,15 @@
 package common
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 
+	"filippo.io/edwards25519"
 	"golang.org/x/crypto/nacl/box"
 	"golang.org/x/crypto/nacl/secretbox"
 )
@@ -17,7 +20,8 @@ const (
 
 	encryptionTypeHybrid = "hybrid"
 
-	ed25519PublicKeySize = 32
+	ed25519PublicKeySize  = 32
+	ed25519PrivateKeySize = 64
 )
 
 type EncryptedMessage struct {
@@ -42,59 +46,81 @@ func ed25519PublicKeyToCurve25519(ed25519PublicKey []byte) ([]byte, error) {
 		return nil, errors.New("invalid Ed25519 public key length")
 	}
 
-	// Ed25519 to Curve25519 conversion
-	// This is a simplified version - in production, use a proper library like filippo.io/edwards25519
-	var curve25519Key [32]byte
-	copy(curve25519Key[:], ed25519PublicKey)
-	return curve25519Key[:], nil
+	point, err := new(edwards25519.Point).SetBytes(ed25519PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Ed25519 public key: %w", err)
+	}
+
+	return point.BytesMontgomery(), nil
 }
 
-// ed25519SecretKeyToCurve25519 converts an Ed25519 secret key to Curve25519
 func ed25519SecretKeyToCurve25519(ed25519SecretKey []byte) ([]byte, error) {
-	if len(ed25519SecretKey) != 64 && len(ed25519SecretKey) != 32 {
+	if len(ed25519SecretKey) != ed25519PrivateKeySize && len(ed25519SecretKey) != keySize {
 		return nil, errors.New("invalid Ed25519 secret key length")
 	}
 
-	// Take the first 32 bytes (the actual secret scalar)
-	var curve25519Key [32]byte
-	copy(curve25519Key[:], ed25519SecretKey[:32])
-	return curve25519Key[:], nil
+	// Use the standard RFC 7748 conversion method
+	var seed [keySize]byte
+	if len(ed25519SecretKey) == ed25519PrivateKeySize {
+		// Extract seed from Ed25519 private key (first 32 bytes)
+		copy(seed[:], ed25519SecretKey[:keySize])
+	} else {
+		// Already a 32-byte seed
+		copy(seed[:], ed25519SecretKey)
+	}
+
+	// Hash the seed to get the scalar
+	h := sha512.Sum512(seed[:])
+
+	// Apply Curve25519 clamping as per RFC 7748
+	h[0] &= 248  // Clear bottom 3 bits
+	h[31] &= 127 // Clear top bit
+	h[31] |= 64  // Set second-highest bit
+
+	return h[:keySize], nil
 }
 
-func EncryptEd25519(message string, recipientEd25519PublicKey []byte) (*EncryptedMessage, error) {
-	ephemeralPublic, ephemeralPrivate, err := box.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate ephemeral key: %w", err)
+func EncryptEd25519(payload string, publicKey []byte) (*EncryptedMessage, error) {
+	if len(publicKey) != ed25519PublicKeySize {
+		return nil, fmt.Errorf("invalid public key length: expected %d bytes, got %d", ed25519PublicKeySize, len(publicKey))
 	}
 
-	recipientCurve25519PublicKey, err := ed25519PublicKeyToCurve25519(recipientEd25519PublicKey)
+	curve25519PublicKey, err := ed25519PublicKeyToCurve25519(publicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert public key: %w", err)
+		return nil, fmt.Errorf("failed to convert Ed25519 public key to Curve25519: %w", err)
 	}
 
-	var recipientPublicKey [32]byte
-	copy(recipientPublicKey[:], recipientCurve25519PublicKey)
+	ephemeralPublicKey, ephemeralPrivateKey, err := box.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate ephemeral key pair: %w", err)
+	}
 
-	var nonce [24]byte
+	var nonce [nonceSize]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Encrypt
-	messageBytes := []byte(message)
-	encrypted := box.Seal(nil, messageBytes, &nonce, &recipientPublicKey, ephemeralPrivate)
+	var recipientPublicKey [keySize]byte
+	copy(recipientPublicKey[:], curve25519PublicKey)
+
+	ciphertext := box.Seal(nil, []byte(payload), &nonce, &recipientPublicKey, ephemeralPrivateKey)
 
 	return &EncryptedMessage{
 		Nonce:              base64.StdEncoding.EncodeToString(nonce[:]),
-		Ciphertext:         base64.StdEncoding.EncodeToString(encrypted),
-		EphemeralPublicKey: base64.StdEncoding.EncodeToString(ephemeralPublic[:]),
+		Ciphertext:         base64.StdEncoding.EncodeToString(ciphertext),
+		EphemeralPublicKey: base64.StdEncoding.EncodeToString(ephemeralPublicKey[:]),
 	}, nil
 }
 
-func DecryptEd25519(encrypted *EncryptedMessage, recipientEd25519SecretKey []byte) (string, error) {
+func DecryptEd25519(encrypted *EncryptedMessage, secretKey []byte) (string, error) {
 	nonce, err := base64.StdEncoding.DecodeString(encrypted.Nonce)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode nonce: %w", err)
+	}
+
+	ephemeralPubKey, err := base64.StdEncoding.DecodeString(encrypted.EphemeralPublicKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode ephemeral public key: %w", err)
 	}
 
 	ciphertext, err := base64.StdEncoding.DecodeString(encrypted.Ciphertext)
@@ -102,25 +128,30 @@ func DecryptEd25519(encrypted *EncryptedMessage, recipientEd25519SecretKey []byt
 		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
 
-	ephemeralPublicKey, err := base64.StdEncoding.DecodeString(encrypted.EphemeralPublicKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode ephemeral public key: %w", err)
+	if len(nonce) != nonceSize {
+		return "", fmt.Errorf("invalid nonce length: %d", len(nonce))
+	}
+	if len(ephemeralPubKey) != ed25519PublicKeySize {
+		return "", fmt.Errorf("invalid ephemeral public key length: %d", len(ephemeralPubKey))
+	}
+	if len(secretKey) != ed25519PrivateKeySize {
+		return "", fmt.Errorf("invalid secret key length: %d", len(secretKey))
 	}
 
-	recipientCurve25519SecretKey, err := ed25519SecretKeyToCurve25519(recipientEd25519SecretKey)
+	curve25519SecretKey, err := ed25519SecretKeyToCurve25519(secretKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to convert secret key: %w", err)
 	}
 
-	var nonceArray [24]byte
-	var recipientSecretKey [32]byte
-	var ephemeralPubKey [32]byte
+	var nonceArray [nonceSize]byte
+	var ephemeralArray [keySize]byte
+	var secretArray [keySize]byte
 
 	copy(nonceArray[:], nonce)
-	copy(recipientSecretKey[:], recipientCurve25519SecretKey)
-	copy(ephemeralPubKey[:], ephemeralPublicKey)
+	copy(ephemeralArray[:], ephemeralPubKey)
+	copy(secretArray[:], curve25519SecretKey)
 
-	decrypted, ok := box.Open(nil, ciphertext, &nonceArray, &ephemeralPubKey, &recipientSecretKey)
+	decrypted, ok := box.Open(nil, ciphertext, &nonceArray, &ephemeralArray, &secretArray)
 	if !ok {
 		return "", errors.New("failed to decrypt: authentication failed")
 	}
@@ -141,12 +172,12 @@ func EncryptWithMessageKey(message string, messageKey []byte) (*EncryptedSymmetr
 		return nil, errors.New("invalid message key length")
 	}
 
-	var nonce [24]byte
+	var nonce [nonceSize]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	var key [32]byte
+	var key [keySize]byte
 	copy(key[:], messageKey)
 
 	messageBytes := []byte(message)
@@ -173,8 +204,8 @@ func DecryptWithMessageKey(encrypted *EncryptedSymmetric, messageKey []byte) (st
 		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
 
-	var nonceArray [24]byte
-	var key [32]byte
+	var nonceArray [nonceSize]byte
+	var key [keySize]byte
 
 	copy(nonceArray[:], nonce)
 	copy(key[:], messageKey)
@@ -198,10 +229,10 @@ func EncryptMessageKey(messageKey, recipientEd25519PublicKey []byte) (*Encrypted
 		return nil, fmt.Errorf("failed to convert public key: %w", err)
 	}
 
-	var recipientPublicKey [32]byte
+	var recipientPublicKey [keySize]byte
 	copy(recipientPublicKey[:], recipientCurve25519PublicKey)
 
-	var nonce [24]byte
+	var nonce [nonceSize]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
@@ -236,9 +267,9 @@ func DecryptMessageKey(encryptedKey *EncryptedMessage, recipientEd25519SecretKey
 		return nil, fmt.Errorf("failed to convert secret key: %w", err)
 	}
 
-	var nonceArray [24]byte
-	var recipientSecretKey [32]byte
-	var ephemeralPubKey [32]byte
+	var nonceArray [nonceSize]byte
+	var recipientSecretKey [keySize]byte
+	var ephemeralPubKey [keySize]byte
 
 	copy(nonceArray[:], nonce)
 	copy(recipientSecretKey[:], recipientCurve25519SecretKey)
@@ -315,4 +346,33 @@ func ParseEncryptedPayload(payloadJSON string) (interface{}, error) {
 	}
 
 	return &encMsg, nil
+}
+
+// GenerateEd25519KeyPair generates a new Ed25519 key pair using the standard library
+func GenerateEd25519KeyPair() (publicKey, privateKey []byte, err error) {
+	return ed25519.GenerateKey(rand.Reader)
+}
+
+// GenerateEd25519KeyPairBase64 generates a new Ed25519 key pair and returns base64-encoded strings
+func GenerateEd25519KeyPairBase64() (publicKey, privateKey string, err error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(pub),
+		base64.StdEncoding.EncodeToString(priv),
+		nil
+}
+
+// ValidateEd25519KeyPair checks if a public/private key pair is valid
+func ValidateEd25519KeyPair(publicKey, privateKey []byte) bool {
+	if len(publicKey) != ed25519PublicKeySize || len(privateKey) != ed25519PrivateKeySize {
+		return false
+	}
+
+	// Test by signing and verifying a message
+	testMessage := []byte("key pair validation test")
+	signature := ed25519.Sign(privateKey, testMessage)
+	return ed25519.Verify(publicKey, testMessage, signature)
 }

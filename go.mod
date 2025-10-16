@@ -3,6 +3,7 @@ module github.com/EnSync-engine/Go-SDK
 go 1.23
 
 require (
+	filippo.io/edwards25519 v1.1.0
 	github.com/gorilla/websocket v1.5.3
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.28.0
