@@ -10,19 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2025-10-16
 
 ### Changed
-- Refactored protobuf to internal package for cleaner public API
-- Updated all import paths to use internal proto package
-- Hidden protobuf implementation details from external users
-- External users now only see clean Go interfaces, no protobuf exposure
+- **BREAKING**: Moved protobuf definitions to internal package
+- Relocated proto files from `proto/` to `internal/proto/` directory
+- Updated all import paths from `github.com/EnSync-engine/Go-SDK/proto` to `github.com/EnSync-engine/Go-SDK/internal/proto`
+- External users can no longer directly access protobuf types (by design - following Go best practices)
 
-### Technical
-- Moved proto files from public to internal/proto directory
-- Updated Makefile to use internal proto path
-- Added generated .pb.go files to .gitignore
-- The internal package pattern prevents external access to proto types
+### Improved
+- **Developer Experience**: External SDK users no longer need protobuf knowledge, toolchain, or dependencies
+- **API Cleanliness**: Public API exclusively exposes clean Go interfaces and structs
+- **Encapsulation**: Internal package pattern prevents accidental access to implementation details
+- **Build Simplicity**: External projects require no `protoc`, protobuf Go packages, or `.proto` file handling
 
-## [0.1.0] - 2025-10-16
+### Technical Details
+- Updated internal imports from `proto.` to `pb.` namespace throughout codebase
+- Modified Makefile `proto` target to generate from `internal/proto/ensync.proto`
+- Added generated `*.pb.go` files to `.gitignore` while preserving source `.proto` files in version control
+- Regenerated protobuf code using `protoc` in new internal location
+- Updated affected files: `grpc/engine.go`, `grpc/client.go`, `mock_servers_test.go`
+- Verified external usage example requires zero protobuf dependencies
 
+### Impact
+- **Breaking Change**: Internal protobuf types no longer accessible to external users
+- **Cleaner Integration**: External users only import main SDK package
+- **Future-Proof**: Internal implementation can evolve without affecting public API contract
+
+## [0.1.0] - 2025-10-15
 
 ### Added
 - Initial Go SDK implementation with unified API
@@ -50,15 +62,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Contributing guidelines with coding standards
 - Mock server testing infrastructure for gRPC client/server interactions
 
-### Improved
-- **WebSocket Engine Refactoring**: Major improvements to connection and authentication logic
-  - Enhanced message handling with better error recovery
-  - Improved publish/subscribe method implementations
-  - Better subscription management and lifecycle handling
-  - Streamlined connection state management
-- **WebSocket URL Parsing**: Added standardized `parseWebSocketURL` function for consistent endpoint handling
-- **Testing Infrastructure**: New `SimpleMockGRPCServer` for comprehensive gRPC testing scenarios
-
 ### Features
 - **Unified API**: Single import, protocol-agnostic interface
 - **Dual Transport**: gRPC and WebSocket with same API
@@ -71,56 +74,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Idiomatic Go**: Follows Go best practices and conventions
 - **Production Ready**: Context support, graceful shutdown, resource cleanup
 
-### Architecture
-- **Clean Separation**: Transport layer (WebSocket/gRPC) vs EnSync protocol layer
-- **Interface Design**: Engine and Subscription interfaces for flexibility
-- **Package Structure**: Unified ensync package with internal implementations
-- **Error Handling**: Typed errors with proper error chaining
-- **Resource Management**: Explicit cleanup with defer and context cancellation
-- **Connection Flow**: Connection established in constructor, authentication in CreateClient
-
-### Examples
-- Basic publisher and subscriber examples
-- gRPC-specific examples with streaming
-- WebSocket examples with reconnection
-- Advanced subscription patterns (manual ack, defer, pause/resume)
-- Protocol auto-detection examples
-- Error handling and retry patterns
-
-### Documentation
-- Complete README with API reference
-- Quick start guide for immediate usage
-- Comprehensive getting started tutorial
-- Design document explaining Go patterns
-- File structure guide for contributors
-- Contributing guidelines with coding standards
-- Example tests serving as documentation
-
 ### Fixed
-- ❌ Slice pointer bug in gRPC publisher (responses were lost)
-- ❌ Uninitialized subscriptionMgr causing nil pointer panics  
-- ❌ Encryption function inconsistency between WebSocket and gRPC
-- ❌ Incorrect recipient key handling in encryption
-- ❌ Message handler goroutine management and cleanup
-- ❌ Connection state management and thread safety
-- ❌ WebSocket reconnection logic and error handling
+- Slice pointer bug in gRPC publisher (responses were lost)
+- Uninitialized subscriptionMgr causing nil pointer panics  
+- Encryption function inconsistency between WebSocket and gRPC
+- Incorrect recipient key handling in encryption
+- Message handler goroutine management and cleanup
+- Connection state management and thread safety
+- WebSocket reconnection logic and error handling
 
-## [0.1.0] - 2025-10-15
-
-### Added
-- Initial release of EnSync Go SDK
-- gRPC and WebSocket transport protocols  
-- Basic publishing and subscribing functionality
-- Ed25519 encryption support
-- Example applications
-- Core documentation
-
-### Architecture Decisions
-- Chose unified API over separate packages
-- Implemented two-phase connection model
-- Used interface-based design for testability
-- Applied functional options pattern for configuration
-- Followed idiomatic Go patterns throughout
-
-[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/EnSync-engine/Go-SDK/releases/tag/v0.1.0
