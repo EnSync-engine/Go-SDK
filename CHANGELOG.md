@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-10-16
+
+### Added
+- Version 0.1.1 release
+
+
 ### Added
 - Initial Go SDK implementation with unified API
 - Two-phase connection model (transport connection + EnSync authentication)
