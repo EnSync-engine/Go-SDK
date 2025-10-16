@@ -67,9 +67,7 @@ update_changelog() {
     
     echo -e "${BLUE}Updating CHANGELOG.md with version $new_version${NC}"
     
-    # Create backup
-    cp CHANGELOG.md CHANGELOG.md.bak
-    
+    # Create backup    
     # Add new version section after [Unreleased]
     sed -i.tmp "/^## \[Unreleased\]/a\\
 \\
