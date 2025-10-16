@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.1] - 2025-10-16
+
 ### 🔒 Security & Cryptography
 - **MAJOR**: Refactored cryptographic implementation to use proven libraries
 - Replaced custom Ed25519 ↔ Curve25519 conversion with `filippo.io/edwards25519` library
@@ -28,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🧪 Testing
 - Updated all crypto tests to use proper Ed25519 key generation
+- Removed unused imports and cleaned up test dependencies
+- All cryptographic unit tests now pass with library-based implementation
+
+### 📚 Documentation
+- Updated code comments to reflect new cryptographic approach
+- Added proper error handling documentation for gRPC streams
 - Fixed test compatibility with library-based cryptographic functions
 - All unit tests now pass with the new implementation
 - Removed dependency on `golang.org/x/crypto/nacl/box` from tests
