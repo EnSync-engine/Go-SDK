@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.2] - 2025-10-16
 
-### Added
-- Version 0.1.2 release
+### Fixed
+- **Module Import Issue**: Added generated protobuf files to version control to fix import errors
+- External users can now properly import the SDK without "module does not contain package" errors
+- Generated `internal/proto/*.pb.go` files are now committed to ensure module completeness
+
+### Technical
+- Removed generated protobuf files from `.gitignore` 
+- Committed `internal/proto/ensync.pb.go` and `internal/proto/ensync_grpc.pb.go` to repository
+- Ensures the internal proto package is available when SDK is used as a Go module dependency
 
 
 ## [0.1.1] - 2025-10-16
@@ -89,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Connection state management and thread safety
 - WebSocket reconnection logic and error handling
 
-[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/EnSync-engine/Go-SDK/releases/tag/v0.1.0
