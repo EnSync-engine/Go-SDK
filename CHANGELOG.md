@@ -9,14 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.1] - 2025-10-16
 
-### Added
-- Version 0.1.1 release
+### Changed
+- Refactored protobuf to internal package for cleaner public API
+- Updated all import paths to use internal proto package
+- Hidden protobuf implementation details from external users
+- External users now only see clean Go interfaces, no protobuf exposure
 
+### Technical
+- Moved proto files from public to internal/proto directory
+- Updated Makefile to use internal proto path
+- Added generated .pb.go files to .gitignore
+- The internal package pattern prevents external access to proto types
 
 ## [0.1.0] - 2025-10-16
-
-### Added
-- Version 0.1.0 release
 
 
 ### Added
