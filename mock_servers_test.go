@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/EnSync-engine/Go-SDK/common"
 	ensyncGrpc "github.com/EnSync-engine/Go-SDK/grpc"
 	"github.com/EnSync-engine/Go-SDK/proto"
-	"google.golang.org/grpc"
 )
 
 type SimpleMockGRPCServer struct {
@@ -65,8 +66,8 @@ func (m *SimpleMockGRPCServer) Subscribe(req *proto.SubscribeRequest, stream pro
 }
 
 // startSimpleMockGRPCServer starts a simple mock gRPC server
-func startSimpleMockGRPCServer(t *testing.T) (*SimpleMockGRPCServer, string) {
-	lis, err := net.Listen("tcp", ":0") // Let OS choose port
+func startSimpleMockGRPCServer(t *testing.T) (addr string) {
+	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		t.Fatalf("Failed to listen: %v", err)
 	}
@@ -84,14 +85,14 @@ func startSimpleMockGRPCServer(t *testing.T) (*SimpleMockGRPCServer, string) {
 	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
 
-	return mockServer, lis.Addr().String()
+	return lis.Addr().String()
 }
 
 func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 	ctx := context.Background()
 
 	// Start mock gRPC server
-	_, addr := startSimpleMockGRPCServer(t)
+	addr := startSimpleMockGRPCServer(t)
 
 	// Create a new gRPC engine
 	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)
@@ -150,7 +151,7 @@ func TestGRPCEngineConnectionAndAuth(t *testing.T) {
 	ctx := context.Background()
 
 	// Start mock gRPC server
-	_, addr := startSimpleMockGRPCServer(t)
+	addr := startSimpleMockGRPCServer(t)
 
 	// Test connection creation
 	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)

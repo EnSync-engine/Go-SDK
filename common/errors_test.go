@@ -23,7 +23,6 @@ func TestNewEnSyncError(t *testing.T) {
 	if err.Type != errorType {
 		t.Errorf("Expected type '%s', got '%s'", errorType, err.Type)
 	}
-
 }
 
 func TestEnSyncErrorError(t *testing.T) {
@@ -130,14 +129,14 @@ func TestPredefinedErrors(t *testing.T) {
 }
 
 func TestIsEnSyncError(t *testing.T) {
-	// Test with EnSyncError
 	ensyncErr := NewEnSyncError("test", ErrTypeAuth, nil)
 	if ensyncErr.Type != ErrTypeAuth {
 		t.Errorf("Expected error type %s, got %s", ErrTypeAuth, ensyncErr.Type)
 	}
 
 	regularErr := errors.New("regular error")
-	if _, ok := regularErr.(*EnSyncError); ok {
+	var ensyncErrPtr *EnSyncError
+	if errors.As(regularErr, &ensyncErrPtr) {
 		t.Error("Regular error should not be of type *EnSyncError")
 	}
 }

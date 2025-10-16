@@ -1,4 +1,4 @@
-.PHONY: help proto test lint fmt clean examples install-tools
+.PHONY: help proto test lint fmt clean examples install-tools version-major version-minor version-patch version-current version-help
 
 help: ## Display this help message
 	@echo "Available targets:"
@@ -70,5 +70,30 @@ deps: ## Download dependencies
 check: fmt vet lint test ## Run all checks (format, vet, lint, test)
 
 all: clean deps proto check build-examples ## Run all tasks
+
+# Version Management
+version-help: ## Show version management help
+	@echo "Version Management Commands:"
+	@echo "  make version-current    - Show current version"
+	@echo "  make version-patch      - Bump patch version (x.y.Z)"
+	@echo "  make version-minor      - Bump minor version (x.Y.0)"
+	@echo "  make version-major      - Bump major version (X.0.0)"
+	@echo ""
+	@echo "After bumping version, commit changes and push to trigger automated tagging."
+
+version-current: ## Show current version
+	@./scripts/version.sh current
+
+version-patch: ## Bump patch version (x.y.Z)
+	@./scripts/version.sh patch
+	@echo "📝 Don't forget to commit and push the changes to trigger automated tagging!"
+
+version-minor: ## Bump minor version (x.Y.0)
+	@./scripts/version.sh minor
+	@echo "📝 Don't forget to commit and push the changes to trigger automated tagging!"
+
+version-major: ## Bump major version (X.0.0)
+	@./scripts/version.sh major
+	@echo "📝 Don't forget to commit and push the changes to trigger automated tagging!"
 
 .DEFAULT_GOAL := help

@@ -14,6 +14,10 @@ import (
 const (
 	keySize   = 32
 	nonceSize = 24
+
+	encryptionTypeHybrid = "hybrid"
+
+	ed25519PublicKeySize = 32
 )
 
 type EncryptedMessage struct {
@@ -34,7 +38,7 @@ type HybridEncryptedMessage struct {
 }
 
 func ed25519PublicKeyToCurve25519(ed25519PublicKey []byte) ([]byte, error) {
-	if len(ed25519PublicKey) != 32 {
+	if len(ed25519PublicKey) != ed25519PublicKeySize {
 		return nil, errors.New("invalid Ed25519 public key length")
 	}
 
@@ -183,7 +187,7 @@ func DecryptWithMessageKey(encrypted *EncryptedSymmetric, messageKey []byte) (st
 	return string(decrypted), nil
 }
 
-func EncryptMessageKey(messageKey []byte, recipientEd25519PublicKey []byte) (*EncryptedMessage, error) {
+func EncryptMessageKey(messageKey, recipientEd25519PublicKey []byte) (*EncryptedMessage, error) {
 	ephemeralPublic, ephemeralPrivate, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate ephemeral key: %w", err)
@@ -275,7 +279,7 @@ func HybridEncrypt(message string, recipientPublicKeys []string) (*HybridEncrypt
 	}
 
 	return &HybridEncryptedMessage{
-		Type:    "hybrid",
+		Type:    encryptionTypeHybrid,
 		Payload: *encryptedPayload,
 		Keys:    encryptedKeys,
 	}, nil
@@ -301,7 +305,7 @@ func DecryptHybridMessage(hybridMsg *HybridEncryptedMessage, recipientSecretKey 
 
 func ParseEncryptedPayload(payloadJSON string) (interface{}, error) {
 	var hybridMsg HybridEncryptedMessage
-	if err := json.Unmarshal([]byte(payloadJSON), &hybridMsg); err == nil && hybridMsg.Type == "hybrid" {
+	if err := json.Unmarshal([]byte(payloadJSON), &hybridMsg); err == nil && hybridMsg.Type == encryptionTypeHybrid {
 		return &hybridMsg, nil
 	}
 

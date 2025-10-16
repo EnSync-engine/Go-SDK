@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -8,6 +9,11 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/nacl/box"
+)
+
+const (
+	testMessageHello = "Hello, World!"
+	testMessage      = "Test message"
 )
 
 func TestEd25519PublicKeyToCurve25519(t *testing.T) {
@@ -44,7 +50,6 @@ func TestEd25519PublicKeyToCurve25519(t *testing.T) {
 }
 
 func TestEd25519SecretKeyToCurve25519(t *testing.T) {
-	// Test with valid 32-byte key
 	validKey32 := make([]byte, 32)
 	_, err := rand.Read(validKey32)
 	if err != nil {
@@ -59,7 +64,6 @@ func TestEd25519SecretKeyToCurve25519(t *testing.T) {
 		t.Errorf("Expected key length 32, got: %d", len(curve25519Key))
 	}
 
-	// Test with valid 64-byte key
 	validKey64 := make([]byte, 64)
 	_, err = rand.Read(validKey64)
 	if err != nil {
@@ -74,7 +78,6 @@ func TestEd25519SecretKeyToCurve25519(t *testing.T) {
 		t.Errorf("Expected key length 32, got: %d", len(curve25519Key))
 	}
 
-	// Test with invalid key length
 	invalidKey := make([]byte, 31)
 	_, err = ed25519SecretKeyToCurve25519(invalidKey)
 	if err == nil {
@@ -86,18 +89,16 @@ func TestEd25519SecretKeyToCurve25519(t *testing.T) {
 }
 
 func TestEncryptDecryptEd25519(t *testing.T) {
-	// Generate Curve25519 key pair directly for testing
 	publicKey, privateKey, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	// Convert to Ed25519-like format (use raw bytes)
 	ed25519PublicKey := publicKey[:]
 	ed25519PrivateKey := make([]byte, 64)
 	copy(ed25519PrivateKey, privateKey[:])
 
-	message := "Hello, World!"
+	message := testMessageHello
 
 	// Encrypt the message
 	encrypted, err := EncryptEd25519(message, ed25519PublicKey)
@@ -142,7 +143,7 @@ func TestEncryptDecryptEd25519(t *testing.T) {
 }
 
 func TestEncryptEd25519InvalidKey(t *testing.T) {
-	message := "Hello, World!"
+	message := testMessageHello
 	invalidKey := make([]byte, 31) // Invalid length
 
 	_, err := EncryptEd25519(message, invalidKey)
@@ -209,7 +210,7 @@ func TestGenerateMessageKey(t *testing.T) {
 	if err != nil {
 		t.Errorf("Expected no error, got: %v", err)
 	}
-	if string(key) == string(key2) {
+	if bytes.Equal(key, key2) {
 		t.Error("Expected different keys, got identical keys")
 	}
 }
@@ -249,7 +250,7 @@ func TestEncryptDecryptWithMessageKey(t *testing.T) {
 }
 
 func TestEncryptWithMessageKeyInvalidKey(t *testing.T) {
-	message := "Test message"
+	message := testMessage
 
 	// Test with invalid key length
 	invalidKey := make([]byte, 31)
@@ -320,13 +321,12 @@ func TestEncryptDecryptMessageKey(t *testing.T) {
 		t.Fatalf("Failed to decrypt message key: %v", err)
 	}
 
-	if string(decryptedKey) != string(messageKey) {
+	if !bytes.Equal(decryptedKey, messageKey) {
 		t.Error("Decrypted message key does not match original")
 	}
 }
 
 func TestHybridEncryptDecrypt(t *testing.T) {
-	// Generate multiple Curve25519 key pairs directly for testing
 	publicKey1, privateKey1, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate key pair 1: %v", err)
@@ -357,9 +357,8 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Fatalf("Failed to hybrid encrypt: %v", err)
 	}
 
-	// Verify hybrid message structure
-	if hybridMsg.Type != "hybrid" {
-		t.Errorf("Expected type 'hybrid', got %q", hybridMsg.Type)
+	if hybridMsg.Type != encryptionTypeHybrid {
+		t.Errorf("Expected type %q, got %q", encryptionTypeHybrid, hybridMsg.Type)
 	}
 	if hybridMsg.Payload.Nonce == "" {
 		t.Error("Expected non-empty payload nonce")
@@ -371,7 +370,6 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Errorf("Expected 2 encrypted keys, got %d", len(hybridMsg.Keys))
 	}
 
-	// Decrypt with first recipient's key
 	decrypted1, err := DecryptHybridMessage(hybridMsg, ed25519PrivateKey1)
 	if err != nil {
 		t.Fatalf("Failed to decrypt hybrid message with key 1: %v", err)
@@ -380,7 +378,6 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Errorf("Expected decrypted message %q, got %q", message, decrypted1)
 	}
 
-	// Decrypt with second recipient's key
 	decrypted2, err := DecryptHybridMessage(hybridMsg, ed25519PrivateKey2)
 	if err != nil {
 		t.Fatalf("Failed to decrypt hybrid message with key 2: %v", err)
@@ -391,7 +388,7 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 }
 
 func TestHybridEncryptInvalidPublicKey(t *testing.T) {
-	message := "Test message"
+	message := testMessage
 	recipientPublicKeys := []string{"invalid-base64"}
 
 	_, err := HybridEncrypt(message, recipientPublicKeys)
@@ -404,13 +401,11 @@ func TestHybridEncryptInvalidPublicKey(t *testing.T) {
 }
 
 func TestDecryptHybridMessageNoValidKeys(t *testing.T) {
-	// Create a hybrid message with keys that won't decrypt with our private key
 	_, privateKey, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	// Create another key pair for the encrypted keys
 	otherPublicKey, _, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate other key pair: %v", err)
@@ -421,7 +416,7 @@ func TestDecryptHybridMessageNoValidKeys(t *testing.T) {
 	copy(ed25519PrivateKey, privateKey[:])
 
 	// Create a message encrypted for the other key
-	message := "Test message"
+	message := testMessage
 	recipientPublicKeys := []string{base64.StdEncoding.EncodeToString(otherPublicKey[:])}
 	hybridMsg, err := HybridEncrypt(message, recipientPublicKeys)
 	if err != nil {
@@ -559,7 +554,6 @@ func TestSymmetricEncryptionEdgeCases(t *testing.T) {
 		t.Errorf("Expected empty string, got %q", decrypted)
 	}
 
-	// Test with very long message
 	longMessage := strings.Repeat("A", 10000)
 	encrypted, err = EncryptWithMessageKey(longMessage, messageKey)
 	if err != nil {

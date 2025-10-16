@@ -5,12 +5,15 @@ import (
 	"errors"
 	"io"
 	"math"
-	"math/rand"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	retryBackoffBase = 2.0
 )
 
 type retryConfig struct {
@@ -89,12 +92,12 @@ func (b *BaseEngine) calculateBackoff(cfg *retryConfig, attempt int) time.Durati
 		return 0
 	}
 
-	backoff := float64(cfg.InitialBackoff) * math.Pow(2, float64(attempt-1))
-	if max := float64(cfg.MaxBackoff); backoff > max {
-		backoff = max
+	backoff := float64(cfg.InitialBackoff) * math.Pow(retryBackoffBase, float64(attempt-1))
+	if maxBackoff := float64(cfg.MaxBackoff); backoff > maxBackoff {
+		backoff = maxBackoff
 	}
 
-	backoff = backoff * (1 + cfg.Jitter*(2*rand.Float64()-1))
+	backoff *= (1 + cfg.Jitter*(2*secureRandFloat64()-1))
 	return time.Duration(backoff)
 }
 
@@ -114,8 +117,9 @@ func isRetryableError(err error) bool {
 		return true
 	}
 
-	if status, ok := status.FromError(err); ok {
-		switch status.Code() {
+	if grpcStatus, ok := status.FromError(err); ok {
+		//nolint:exhaustive // We intentionally handle only specific retryable gRPC error codes
+		switch grpcStatus.Code() {
 		case
 			codes.Unavailable,
 			codes.DeadlineExceeded,
@@ -123,6 +127,8 @@ func isRetryableError(err error) bool {
 			codes.Aborted,
 			codes.Internal:
 			return true
+		default:
+			return false
 		}
 	}
 

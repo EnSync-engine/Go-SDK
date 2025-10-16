@@ -19,11 +19,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create engine: %v", err)
 	}
-	defer func() {
-		if err := engine.Close(); err != nil {
-			log.Printf("Failed to close engine: %v", err)
-		}
-	}()
 
 	// Authenticate with EnSync protocol over the established WebSocket
 	err = engine.CreateClient("your-access-key")
@@ -31,13 +26,21 @@ func main() {
 		log.Fatalf("Failed to authenticate client: %v", err)
 	}
 
+	// Set up cleanup after all potential fatal errors
+	defer func() {
+		if err := engine.Close(); err != nil {
+			log.Printf("Failed to close engine: %v", err)
+		}
+	}()
+
 	// Subscribe to event
 	eventName := "yourcompany/payment/POS/PAYMENT_SUCCESSFUL"
 	subscription, err := engine.Subscribe(eventName, &common.SubscribeOptions{
 		AutoAck: true,
 	})
 	if err != nil {
-		log.Fatalf("Failed to subscribe: %v", err)
+		log.Printf("Failed to subscribe: %v", err)
+		return
 	}
 
 	// Register event handler

@@ -1,8 +1,9 @@
 package common
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"math"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -13,7 +14,19 @@ const (
 	circuitStateClosed   circuitState = "closed"
 	circuitStateOpen     circuitState = "open"
 	circuitStateHalfOpen circuitState = "half-open"
+
+	exponentialBase = 2.0
+
+	fallbackRandomMod = 1000000
 )
+
+func secureRandFloat64() float64 {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return float64(time.Now().UnixNano()%fallbackRandomMod) / float64(fallbackRandomMod)
+	}
+	return float64(binary.LittleEndian.Uint64(buf[:])) / float64(^uint64(0))
+}
 
 type circuitBreakerConfig struct {
 	FailureThreshold int
@@ -58,7 +71,7 @@ func (cb *circuitBreaker) getResetTimeout() time.Duration {
 	}
 
 	// Calculate exponential backoff
-	exp := math.Pow(2, float64(cb.failures-1))
+	exp := math.Pow(exponentialBase, float64(cb.failures-1))
 	backoff := float64(cb.config.ResetTimeout) * exp
 
 	// Cap at max reset timeout
@@ -67,7 +80,7 @@ func (cb *circuitBreaker) getResetTimeout() time.Duration {
 	}
 
 	// Add jitter (0.8x to 1.2x of backoff)
-	jitter := 0.8 + 0.4*rand.Float64()
+	jitter := 0.8 + 0.4*secureRandFloat64()
 	return time.Duration(backoff * jitter)
 }
 
@@ -119,7 +132,8 @@ func (cb *circuitBreaker) RecordSuccess() {
 			cb.logger.Info("Circuit breaker half-open, testing connection")
 		}
 
-	default: // circuitStateClosed
+	case circuitStateClosed:
+		// Already in closed state, reset counters to be safe
 		cb.resetCounters()
 	}
 }
