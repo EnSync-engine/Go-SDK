@@ -17,9 +17,9 @@ vendor/
 # Go workspace file
 go.work
 
-# Generated protobuf files (keep .proto files, ignore generated .pb.go files)
-internal/proto/*.pb.go
-internal/proto/*_grpc.pb.go
+# Generated protobuf files are now committed for module consumers
+# internal/proto/*.pb.go
+# internal/proto/*_grpc.pb.go
 
 # IDE specific files
 .idea/
