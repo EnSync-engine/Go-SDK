@@ -16,17 +16,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create engine: %v", err)
 	}
+
+	// Create and authenticate client
+	err = engine.CreateClient("your-access-key")
+	if err != nil {
+		log.Printf("Failed to subscribe: %v", err)
+		return
+	}
+
 	defer func() {
 		if err := engine.Close(); err != nil {
 			log.Printf("Failed to close engine: %v", err)
 		}
 	}()
-
-	// Create and authenticate client
-	err = engine.CreateClient("your-access-key")
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
 
 	// Prepare event data
 	eventName := "yourcompany/payment/POS/PAYMENT_SUCCESSFUL"
@@ -48,7 +50,8 @@ func main() {
 	// Publish event
 	eventID, err := engine.Publish(eventName, recipients, payload, metadata, nil)
 	if err != nil {
-		log.Fatalf("Failed to publish event: %v", err)
+		log.Printf("Failed to publish event: %v", err)
+		return
 	}
 
 	log.Printf("Event published successfully with ID: %s", eventID)

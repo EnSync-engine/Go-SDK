@@ -112,7 +112,13 @@ type Engine interface {
 	CreateClient(accessKey string, options ...ClientOption) error
 
 	// Publish publishes an event to the EnSync system
-	Publish(eventName string, recipients []string, payload map[string]interface{}, metadata *EventMetadata, options *PublishOptions) (string, error)
+	Publish(
+		eventName string,
+		recipients []string,
+		payload map[string]interface{},
+		metadata *EventMetadata,
+		options *PublishOptions,
+	) (string, error)
 
 	// Subscribe subscribes to an event
 	Subscribe(eventName string, options *SubscribeOptions) (Subscription, error)

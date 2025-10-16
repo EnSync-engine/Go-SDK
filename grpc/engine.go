@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -9,11 +10,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/EnSync-engine/Go-SDK/common"
-	"github.com/EnSync-engine/Go-SDK/proto"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/EnSync-engine/Go-SDK/common"
+	"github.com/EnSync-engine/Go-SDK/proto"
+)
+
+const (
+	defaultConnectionTimeout = 10 * time.Second
+	defaultOperationTimeout  = 5 * time.Second
+	heartbeatInterval        = 30 * time.Second
+	shutdownTimeout          = 5 * time.Second
+	cleanupDelay             = 100 * time.Millisecond
+
+	defaultMaxMessageSize = 1024 * 1024
+	defaultMaxRecvSize    = 2 * 1024 * 1024
+	maxSafeMessageSize    = 10 * 1024 * 1024
 )
 
 type GRPCEngine struct {
@@ -37,28 +52,52 @@ type grpcSubscription struct {
 	cancel       context.CancelFunc
 }
 
+type publishData struct {
+	PayloadJSON     []byte
+	MetadataJSON    []byte
+	PayloadMetaJSON []byte
+}
+
 func NewGRPCEngine(
-	ctx context.Context, endpoint string, opts ...common.Option,
+	ctx context.Context,
+	endpoint string,
+	opts ...common.Option,
 ) (*GRPCEngine, error) {
-	grpcURL, err := parseGRPCURL(endpoint)
+	if ctx == nil {
+		return nil, common.NewEnSyncError("context cannot be nil", common.ErrTypeValidation, nil)
+	}
+
+	host, secure, err := parseGRPCURL(endpoint)
 	if err != nil {
 		return nil, err
 	}
+
+	serverName := extractServerName(host)
 
 	baseEngine, err := common.NewBaseEngine(ctx, opts...)
 	if err != nil {
 		return nil, common.NewEnSyncError("failed to create base engine", common.ErrTypeConnection, err)
 	}
 
+	var creds credentials.TransportCredentials
+	if secure {
+		creds = credentials.NewTLS(&tls.Config{
+			ServerName: serverName,
+			MinVersion: tls.VersionTLS12,
+		})
+	} else {
+		creds = insecure.NewCredentials()
+	}
+
 	grpcOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(10*1024*1024),
-			grpc.MaxCallSendMsgSize(10*1024*1024),
+			grpc.MaxCallRecvMsgSize(defaultMaxRecvSize),
+			grpc.MaxCallSendMsgSize(defaultMaxMessageSize),
 		),
 	}
 
-	conn, err := grpc.NewClient(grpcURL, grpcOpts...)
+	conn, err := grpc.NewClient(host, grpcOpts...)
 	if err != nil {
 		return nil, common.NewEnSyncError("failed to connect to gRPC server", common.ErrTypeConnection, err)
 	}
@@ -75,7 +114,6 @@ func NewGRPCEngine(
 func (e *GRPCEngine) CreateClient(accessKey string, options ...common.ClientOption) error {
 	e.AccessKey = accessKey
 
-	// Apply client options
 	config := &common.ClientConfig{}
 	for _, opt := range options {
 		opt(config)
@@ -95,7 +133,7 @@ func (e *GRPCEngine) authenticate() error {
 	return e.WithRetry(e.Ctx, func() error {
 		e.Logger.Info("Sending authentication request")
 
-		ctx, cancel := context.WithTimeout(e.Ctx, 10*time.Second)
+		ctx, cancel := context.WithTimeout(e.Ctx, defaultConnectionTimeout)
 		defer cancel()
 
 		resp, err := e.client.Connect(ctx, &proto.ConnectRequest{
@@ -128,7 +166,7 @@ func (e *GRPCEngine) setAuthenticationResult(clientID, clientHash string) {
 }
 
 func (e *GRPCEngine) startHeartbeat() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	for {
@@ -152,7 +190,7 @@ func (e *GRPCEngine) sendHeartbeat() error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(e.Ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
 	defer cancel()
 
 	resp, err := e.client.Heartbeat(ctx, &proto.HeartbeatRequest{
@@ -199,19 +237,23 @@ func (e *GRPCEngine) Publish(
 	}
 
 	// Prepare data
-	payloadJSON, metadataJSON, payloadMetaJSON, err := e.preparePublishData(payload, metadata)
+	publishData, err := e.preparePublishData(payload, metadata)
 	if err != nil {
 		return "", err
 	}
 
 	// Execute publish
-	return e.executePublish(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, useHybridEncryption)
+	return e.executePublish(
+		eventName, recipients,
+		publishData.PayloadJSON, publishData.MetadataJSON, publishData.PayloadMetaJSON,
+		useHybridEncryption,
+	)
 }
 
 func (e *GRPCEngine) preparePublishData(
 	payload map[string]interface{},
 	metadata *common.EventMetadata,
-) ([]byte, []byte, []byte, error) {
+) (*publishData, error) {
 	if metadata == nil {
 		metadata = &common.EventMetadata{
 			Persist: true,
@@ -222,20 +264,24 @@ func (e *GRPCEngine) preparePublishData(
 	payloadMeta := common.AnalyzePayload(payload)
 	payloadMetaJSON, err := json.Marshal(payloadMeta)
 	if err != nil {
-		return nil, nil, nil, common.NewEnSyncError("failed to marshal payload metadata", common.ErrTypePublish, err)
+		return nil, common.NewEnSyncError("failed to marshal payload metadata", common.ErrTypePublish, err)
 	}
 
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
-		return nil, nil, nil, common.NewEnSyncError("failed to marshal payload", common.ErrTypePublish, err)
+		return nil, common.NewEnSyncError("failed to marshal payload", common.ErrTypePublish, err)
 	}
 
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
-		return nil, nil, nil, common.NewEnSyncError("failed to marshal metadata", common.ErrTypePublish, err)
+		return nil, common.NewEnSyncError("failed to marshal metadata", common.ErrTypePublish, err)
 	}
 
-	return payloadJSON, metadataJSON, payloadMetaJSON, nil
+	return &publishData{
+		PayloadJSON:     payloadJSON,
+		MetadataJSON:    metadataJSON,
+		PayloadMetaJSON: payloadMetaJSON,
+	}, nil
 }
 
 func (e *GRPCEngine) executePublish(
@@ -336,7 +382,7 @@ func (e *GRPCEngine) sendPublishRequest(
 	eventName, recipient, payload, metadata, payloadMeta string,
 	responses *[]string,
 ) error {
-	ctx, cancel := context.WithTimeout(e.Ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
 	defer cancel()
 
 	req := &proto.PublishEventRequest{
@@ -460,7 +506,7 @@ func (s *grpcSubscription) Defer(eventIdem string, delayMs int64, reason string)
 	var resp *common.DeferResponse
 
 	err := s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
 		deferResp, deferErr := s.engine.client.DeferEvent(ctx, &proto.DeferRequest{
@@ -499,7 +545,7 @@ func (s *grpcSubscription) Discard(eventIdem, reason string) (*common.DiscardRes
 	var resp *common.DiscardResponse
 
 	err := s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
 		discardResp, discardErr := s.engine.client.DiscardEvent(ctx, &proto.DiscardRequest{
@@ -534,7 +580,7 @@ func (s *grpcSubscription) Discard(eventIdem, reason string) (*common.DiscardRes
 
 func (s *grpcSubscription) Pause(reason string) error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
 		resp, err := s.engine.client.PauseEvents(ctx, &proto.PauseRequest{
@@ -557,7 +603,7 @@ func (s *grpcSubscription) Pause(reason string) error {
 
 func (s *grpcSubscription) Resume() error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
 		resp, err := s.engine.client.ContinueEvents(ctx, &proto.ContinueRequest{
@@ -581,7 +627,7 @@ func (s *grpcSubscription) Replay(eventIdem string) (*common.EventPayload, error
 	var result *common.EventPayload
 
 	err := s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
 		resp, replayErr := s.engine.client.ReplayEvent(
@@ -775,7 +821,7 @@ func (s *grpcSubscription) processEvent(event *proto.EventStreamResponse) (*comm
 
 func (s *grpcSubscription) Ack(eventID string, block int64) error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
 		resp, err := s.engine.client.AcknowledgeEvent(ctx, &proto.AcknowledgeRequest{
@@ -799,7 +845,7 @@ func (s *grpcSubscription) Ack(eventID string, block int64) error {
 // Unsubscribe cancels the subscription
 func (s *grpcSubscription) Unsubscribe() error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
 		resp, err := s.engine.client.Unsubscribe(ctx, &proto.UnsubscribeRequest{
@@ -839,7 +885,7 @@ func (e *GRPCEngine) Close() error {
 			if sub, ok := value.(*grpcSubscription); ok {
 				sub.cancel()
 				// Give some time for cleanup
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(cleanupDelay)
 			}
 			e.SubscriptionMgr.Delete(key.(string))
 			return true
@@ -851,7 +897,7 @@ func (e *GRPCEngine) Close() error {
 	select {
 	case <-done:
 		e.Logger.Info("All subscriptions closed successfully")
-	case <-time.After(5 * time.Second):
+	case <-time.After(shutdownTimeout):
 		e.Logger.Warn("Timeout waiting for subscriptions to close")
 	}
 

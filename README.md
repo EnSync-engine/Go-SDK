@@ -473,12 +473,7 @@ import (
 )
 
 ctx := context.Background()
-engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051",
-    // Reconnection settings
-    common.WithMaxReconnectAttempts(10),
-    common.WithReconnectDelay(3 * time.Second),
-    common.WithAutoReconnect(true),
-    
+engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051",    
     // Circuit breaker settings
     common.WithCircuitBreaker(5, 30 * time.Second), // 5 failures, 30s reset
     
@@ -505,10 +500,6 @@ import (
 
 ctx := context.Background()
 engine, err := ensync.NewWebSocketEngine(ctx, "ws://localhost:8082",
-    // Common options (same as above)
-    common.WithMaxReconnectAttempts(5),
-    common.WithReconnectDelay(2 * time.Second),
-    
     // WebSocket-specific options would go here
     // (currently using embedded common config)
 )
@@ -653,6 +644,31 @@ Go-idiomatic error handling with typed errors instead of try-catch blocks.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Development Workflow
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/new-feature`
+3. Make your changes and add tests
+4. Run tests: `make test`
+5. Submit a pull request
+
+### Releases
+
+We use automated semantic versioning:
+
+```bash
+# Bump version and update changelog
+make version-patch   # Bug fixes
+make version-minor   # New features  
+make version-major   # Breaking changes
+
+# Commit and push to trigger automated release
+git add . && git commit -m "chore: bump version to v1.2.3"
+git push origin main
+```
+
+See [VERSIONING.md](VERSIONING.md) for detailed release instructions.
 
 ## License
 

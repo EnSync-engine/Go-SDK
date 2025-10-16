@@ -2,16 +2,27 @@ package websocket
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/EnSync-engine/Go-SDK/common"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+
+	"github.com/EnSync-engine/Go-SDK/common"
+)
+
+const (
+	defaultConnectionTimeout = 10 * time.Second
+
+	pingInterval = 30 * time.Second
+
+	keyValueParts = 2
 )
 
 type WebSocketEngine struct {
@@ -19,12 +30,6 @@ type WebSocketEngine struct {
 	conn             *websocket.Conn
 	messageCallbacks sync.Map
 	mu               sync.Mutex
-	wsConfig         wsConfig
-}
-
-type wsConfig struct {
-	pingInterval      time.Duration
-	reconnectInterval time.Duration
 }
 
 type wsSubscription struct {
@@ -65,11 +70,7 @@ func NewWebSocketEngine(
 	}
 
 	e := &WebSocketEngine{
-		BaseEngine: baseEngine,
-		wsConfig: wsConfig{
-			pingInterval:      30 * time.Second,
-			reconnectInterval: 5 * time.Second,
-		},
+		BaseEngine:       baseEngine,
 		messageCallbacks: sync.Map{},
 	}
 
@@ -123,13 +124,28 @@ func (e *WebSocketEngine) connect(wsURL string) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(e.Ctx, 10*time.Second)
+	u, err := url.Parse(wsURL)
+	if err != nil {
+		return common.NewEnSyncError("invalid WebSocket URL", common.ErrTypeValidation, err)
+	}
+
+	ctx, cancel := context.WithTimeout(e.Ctx, defaultConnectionTimeout)
 	defer cancel()
 
 	dialer := &websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
 		ReadBufferSize:   4096,
 		WriteBufferSize:  4096,
+	}
+
+	if u.Scheme == schemeWSS {
+		dialer.TLSClientConfig = &tls.Config{
+			ServerName: u.Hostname(),
+			MinVersion: tls.VersionTLS12,
+		}
+		e.Logger.Info("Establishing secure WebSocket connection", zap.String("url", wsURL))
+	} else {
+		e.Logger.Warn("Establishing insecure WebSocket connection - development mode", zap.String("url", wsURL))
 	}
 
 	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
@@ -145,7 +161,6 @@ func (e *WebSocketEngine) connect(wsURL string) error {
 	e.State.Mu.Unlock()
 
 	go e.handleMessages()
-
 	go e.startPingInterval()
 
 	return nil
@@ -181,7 +196,7 @@ func (e *WebSocketEngine) authenticate() error {
 }
 
 func (e *WebSocketEngine) startPingInterval() {
-	ticker := time.NewTicker(e.wsConfig.pingInterval)
+	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -320,7 +335,12 @@ func (e *WebSocketEngine) Publish(
 	return strings.Join(responses, ","), nil
 }
 
-func (e *WebSocketEngine) publishHybrid(eventName string, recipients []string, payloadJSON, metadataJSON, payloadMetaJSON []byte, responses *[]string) error {
+func (e *WebSocketEngine) publishHybrid(
+	eventName string,
+	recipients []string,
+	payloadJSON, metadataJSON, payloadMetaJSON []byte,
+	responses *[]string,
+) error {
 	hybridMsg, err := common.HybridEncrypt(string(payloadJSON), recipients)
 	if err != nil {
 		return common.NewEnSyncError("hybrid encryption failed", common.ErrTypePublish, err)
@@ -566,8 +586,8 @@ func parseKeyValue(data string) map[string]string {
 
 	items := strings.Split(data, ",")
 	for _, item := range items {
-		parts := strings.SplitN(item, "=", 2)
-		if len(parts) == 2 {
+		parts := strings.SplitN(item, "=", keyValueParts)
+		if len(parts) == keyValueParts {
 			result[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 		}
 	}
@@ -671,7 +691,7 @@ func (s *wsSubscription) Defer(eventIdem string, delayMs int64, reason string) (
 	}, nil
 }
 
-func (s *wsSubscription) Discard(eventIdem string, reason string) (*common.DiscardResponse, error) {
+func (s *wsSubscription) Discard(eventIdem, reason string) (*common.DiscardResponse, error) {
 	message := fmt.Sprintf("DISCARD;CLIENT_ID=:%s;EVENT_IDEM=:%s;EVENT_NAME=:%s;REASON=:%s",
 		s.engine.ClientID, eventIdem, s.eventName, reason)
 
