@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/EnSync-engine/Go-SDK/common"
-	"github.com/EnSync-engine/Go-SDK/proto"
+	pb "github.com/EnSync-engine/Go-SDK/internal/proto"
 )
 
 const (
@@ -33,7 +33,7 @@ const (
 
 type GRPCEngine struct {
 	*common.BaseEngine
-	client proto.EnSyncServiceClient
+	client pb.EnSyncServiceClient
 	conn   *grpc.ClientConn
 }
 
@@ -45,7 +45,7 @@ type baseSubscription struct {
 
 type grpcSubscription struct {
 	baseSubscription
-	stream       proto.EnSyncService_SubscribeClient
+	stream       pb.EnSyncService_SubscribeClient
 	autoAck      bool
 	appSecretKey string
 	engine       *GRPCEngine
@@ -104,7 +104,7 @@ func NewGRPCEngine(
 
 	engine := &GRPCEngine{
 		BaseEngine: baseEngine,
-		client:     proto.NewEnSyncServiceClient(conn),
+		client:     pb.NewEnSyncServiceClient(conn),
 		conn:       conn,
 	}
 
@@ -136,7 +136,7 @@ func (e *GRPCEngine) authenticate() error {
 		ctx, cancel := context.WithTimeout(e.Ctx, defaultConnectionTimeout)
 		defer cancel()
 
-		resp, err := e.client.Connect(ctx, &proto.ConnectRequest{
+		resp, err := e.client.Connect(ctx, &pb.ConnectRequest{
 			AccessKey: e.AccessKey,
 		})
 		if err != nil {
@@ -193,7 +193,7 @@ func (e *GRPCEngine) sendHeartbeat() error {
 	ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
 	defer cancel()
 
-	resp, err := e.client.Heartbeat(ctx, &proto.HeartbeatRequest{
+	resp, err := e.client.Heartbeat(ctx, &pb.HeartbeatRequest{
 		ClientId: e.ClientID,
 	})
 	if err != nil {
@@ -385,7 +385,7 @@ func (e *GRPCEngine) sendPublishRequest(
 	ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
 	defer cancel()
 
-	req := &proto.PublishEventRequest{
+	req := &pb.PublishEventRequest{
 		ClientId:  e.ClientID,
 		EventName: eventName,
 		Payload:   payload,
@@ -440,7 +440,7 @@ func (e *GRPCEngine) Subscribe(eventName string, options *common.SubscribeOption
 	retryErr := e.WithRetry(e.Ctx, func() error {
 		subCtx, cancel := context.WithCancel(e.Ctx)
 
-		stream, err := e.client.Subscribe(subCtx, &proto.SubscribeRequest{
+		stream, err := e.client.Subscribe(subCtx, &pb.SubscribeRequest{
 			ClientId:  e.ClientID,
 			EventName: eventName,
 		})
@@ -509,7 +509,7 @@ func (s *grpcSubscription) Defer(eventIdem string, delayMs int64, reason string)
 		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
-		deferResp, deferErr := s.engine.client.DeferEvent(ctx, &proto.DeferRequest{
+		deferResp, deferErr := s.engine.client.DeferEvent(ctx, &pb.DeferRequest{
 			ClientId:  s.engine.ClientID,
 			EventIdem: eventIdem,
 			DelayMs:   delayMs,
@@ -548,7 +548,7 @@ func (s *grpcSubscription) Discard(eventIdem, reason string) (*common.DiscardRes
 		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
-		discardResp, discardErr := s.engine.client.DiscardEvent(ctx, &proto.DiscardRequest{
+		discardResp, discardErr := s.engine.client.DiscardEvent(ctx, &pb.DiscardRequest{
 			ClientId:  s.engine.ClientID,
 			EventIdem: eventIdem,
 			Reason:    reason,
@@ -583,7 +583,7 @@ func (s *grpcSubscription) Pause(reason string) error {
 		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
-		resp, err := s.engine.client.PauseEvents(ctx, &proto.PauseRequest{
+		resp, err := s.engine.client.PauseEvents(ctx, &pb.PauseRequest{
 			ClientId:  s.engine.ClientID,
 			EventName: s.eventName,
 			Reason:    reason,
@@ -606,7 +606,7 @@ func (s *grpcSubscription) Resume() error {
 		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
-		resp, err := s.engine.client.ContinueEvents(ctx, &proto.ContinueRequest{
+		resp, err := s.engine.client.ContinueEvents(ctx, &pb.ContinueRequest{
 			ClientId:  s.engine.ClientID,
 			EventName: s.eventName,
 		})
@@ -631,7 +631,7 @@ func (s *grpcSubscription) Replay(eventIdem string) (*common.EventPayload, error
 		defer cancel()
 
 		resp, replayErr := s.engine.client.ReplayEvent(
-			ctx, &proto.ReplayRequest{
+			ctx, &pb.ReplayRequest{
 				ClientId:  s.engine.ClientID,
 				EventName: s.eventName,
 				EventIdem: eventIdem,
@@ -645,7 +645,7 @@ func (s *grpcSubscription) Replay(eventIdem string) (*common.EventPayload, error
 			return common.NewEnSyncError("replay rejected: "+resp.Message, common.ErrTypeReplay, nil)
 		}
 
-		var eventData proto.EventStreamResponse
+		var eventData pb.EventStreamResponse
 		if err := json.Unmarshal([]byte(resp.EventData), &eventData); err != nil {
 			return common.NewEnSyncError("failed to parse replayed event", common.ErrTypeReplay, err)
 		}
@@ -706,7 +706,7 @@ func (s *grpcSubscription) handleStreamError(err error) {
 	s.engine.State.Mu.Unlock()
 }
 
-func (s *grpcSubscription) handleEvent(event *proto.EventStreamResponse) {
+func (s *grpcSubscription) handleEvent(event *pb.EventStreamResponse) {
 	processedEvent, err := s.processEvent(event)
 	if err != nil {
 		s.engine.Logger.Error("Event processing failed",
@@ -753,7 +753,7 @@ func (s *grpcSubscription) callHandlers(event *common.EventPayload) {
 }
 
 // processEvent processes a single event
-func (s *grpcSubscription) processEvent(event *proto.EventStreamResponse) (*common.EventPayload, error) {
+func (s *grpcSubscription) processEvent(event *pb.EventStreamResponse) (*common.EventPayload, error) {
 	decryptionKey := s.appSecretKey
 	if decryptionKey == "" {
 		decryptionKey = s.engine.AccessKey
@@ -824,7 +824,7 @@ func (s *grpcSubscription) Ack(eventID string, block int64) error {
 		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
-		resp, err := s.engine.client.AcknowledgeEvent(ctx, &proto.AcknowledgeRequest{
+		resp, err := s.engine.client.AcknowledgeEvent(ctx, &pb.AcknowledgeRequest{
 			ClientId:       s.engine.ClientID,
 			EventIdem:      eventID,
 			PartitionBlock: block,
@@ -848,7 +848,7 @@ func (s *grpcSubscription) Unsubscribe() error {
 		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
 		defer cancel()
 
-		resp, err := s.engine.client.Unsubscribe(ctx, &proto.UnsubscribeRequest{
+		resp, err := s.engine.client.Unsubscribe(ctx, &pb.UnsubscribeRequest{
 			ClientId:  s.engine.ClientID,
 			EventName: s.eventName,
 		})

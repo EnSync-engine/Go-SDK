@@ -14,52 +14,52 @@ import (
 
 	"github.com/EnSync-engine/Go-SDK/common"
 	ensyncGrpc "github.com/EnSync-engine/Go-SDK/grpc"
-	"github.com/EnSync-engine/Go-SDK/proto"
+	pb "github.com/EnSync-engine/Go-SDK/internal/proto"
 )
 
 type SimpleMockGRPCServer struct {
-	proto.UnimplementedEnSyncServiceServer
+	pb.UnimplementedEnSyncServiceServer
 	mu            sync.RWMutex
 	authenticated bool
 }
 
-func (m *SimpleMockGRPCServer) Connect(ctx context.Context, req *proto.ConnectRequest) (*proto.ConnectResponse, error) {
+func (m *SimpleMockGRPCServer) Connect(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if req.AccessKey == "" {
-		return &proto.ConnectResponse{
+		return &pb.ConnectResponse{
 			Success:      false,
 			ErrorMessage: "invalid access key",
 		}, nil
 	}
 
 	m.authenticated = true
-	return &proto.ConnectResponse{
+	return &pb.ConnectResponse{
 		Success:    true,
 		ClientId:   "test-client-id",
 		ClientHash: "test-client-hash",
 	}, nil
 }
 
-func (m *SimpleMockGRPCServer) PublishEvent(ctx context.Context, req *proto.PublishEventRequest) (*proto.PublishEventResponse, error) {
+func (m *SimpleMockGRPCServer) PublishEvent(ctx context.Context, req *pb.PublishEventRequest) (*pb.PublishEventResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.authenticated {
-		return &proto.PublishEventResponse{
+		return &pb.PublishEventResponse{
 			Success:      false,
 			ErrorMessage: "not authenticated",
 		}, nil
 	}
 
-	return &proto.PublishEventResponse{
+	return &pb.PublishEventResponse{
 		Success:   true,
 		EventIdem: "mock-event-id",
 	}, nil
 }
 
-func (m *SimpleMockGRPCServer) Subscribe(req *proto.SubscribeRequest, stream proto.EnSyncService_SubscribeServer) error {
+func (m *SimpleMockGRPCServer) Subscribe(req *pb.SubscribeRequest, stream pb.EnSyncService_SubscribeServer) error {
 	// Just keep the stream open and don't send events to avoid complexity
 	<-stream.Context().Done()
 	return nil
@@ -74,7 +74,7 @@ func startSimpleMockGRPCServer(t *testing.T) (addr string) {
 
 	mockServer := &SimpleMockGRPCServer{}
 	grpcServer := grpc.NewServer()
-	proto.RegisterEnSyncServiceServer(grpcServer, mockServer)
+	pb.RegisterEnSyncServiceServer(grpcServer, mockServer)
 
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
