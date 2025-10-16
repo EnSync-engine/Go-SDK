@@ -192,19 +192,21 @@ func (e *GRPCEngine) sendHeartbeat() error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
-	defer cancel()
+	return e.WithRetry(e.Ctx, func() error {
+		ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
+		defer cancel()
 
-	resp, err := e.client.Heartbeat(ctx, &pb.HeartbeatRequest{
-		ClientId: e.ClientID,
+		resp, err := e.client.Heartbeat(ctx, &pb.HeartbeatRequest{
+			ClientId: e.ClientID,
+		})
+		if err != nil {
+			return common.NewEnSyncError("heartbeat request failed", common.ErrTypeConnection, err)
+		}
+		if !resp.Success {
+			return common.NewEnSyncError("heartbeat rejected: "+resp.String(), common.ErrTypeConnection, nil)
+		}
+		return nil
 	})
-	if err != nil {
-		return common.NewEnSyncError("heartbeat request failed", common.ErrTypeConnection, err)
-	}
-	if !resp.Success {
-		return common.NewEnSyncError("heartbeat rejected: "+resp.String(), common.ErrTypeConnection, nil)
-	}
-	return nil
 }
 
 func (e *GRPCEngine) Publish(
