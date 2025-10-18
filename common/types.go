@@ -73,6 +73,13 @@ type PayloadMetadata struct {
 	Skeleton map[string]string `json:"skeleton"`
 }
 
+// PublishData is an internal struct for publishing events
+type PublishData struct {
+	PayloadJSON     []byte
+	MetadataJSON    []byte
+	PayloadMetaJSON []byte
+}
+
 // EventHandler is a function that handles incoming events
 type EventHandler func(*EventPayload) error
 
@@ -139,7 +146,7 @@ type Engine interface {
 	Logger() Logger
 }
 
-func AnalyzePayload(payload map[string]interface{}) *PayloadMetadata {
+func analyzePayload(payload map[string]interface{}) *PayloadMetadata {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return &PayloadMetadata{

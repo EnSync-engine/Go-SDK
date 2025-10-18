@@ -45,7 +45,7 @@ func TestAnalyzePayload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := AnalyzePayload(tt.payload)
+			result := analyzePayload(tt.payload)
 
 			if result == nil {
 				t.Fatal("AnalyzePayload returned nil")
@@ -71,7 +71,7 @@ func TestAnalyzePayload(t *testing.T) {
 }
 
 func TestAnalyzePayloadEmptyPayload(t *testing.T) {
-	result := AnalyzePayload(map[string]interface{}{})
+	result := analyzePayload(map[string]interface{}{})
 
 	if result == nil {
 		t.Fatal("AnalyzePayload returned nil")

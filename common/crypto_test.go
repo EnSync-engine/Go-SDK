@@ -16,7 +16,7 @@ const (
 
 func TestEd25519PublicKeyToCurve25519(t *testing.T) {
 	// Test with valid Ed25519 public key
-	publicKey, _, err := GenerateEd25519KeyPair()
+	publicKey, _, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestEd25519PublicKeyToCurve25519(t *testing.T) {
 
 func TestEd25519SecretKeyToCurve25519(t *testing.T) {
 	// Test with valid Ed25519 private key (64 bytes)
-	_, privateKey, err := GenerateEd25519KeyPair()
+	_, privateKey, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestEd25519SecretKeyToCurve25519(t *testing.T) {
 
 func TestEncryptDecryptEd25519(t *testing.T) {
 	// Generate proper Ed25519 key pair
-	ed25519PublicKey, ed25519PrivateKey, err := GenerateEd25519KeyPair()
+	ed25519PublicKey, ed25519PrivateKey, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestEncryptDecryptWithMessageKey(t *testing.T) {
 	}
 
 	// Encrypt the message
-	encrypted, err := EncryptWithMessageKey(message, messageKey)
+	encrypted, err := encryptWithMessageKey(message, messageKey)
 	if err != nil {
 		t.Fatalf("Failed to encrypt with message key: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestEncryptDecryptWithMessageKey(t *testing.T) {
 	}
 
 	// Decrypt the message
-	decrypted, err := DecryptWithMessageKey(encrypted, messageKey)
+	decrypted, err := decryptWithMessageKey(encrypted, messageKey)
 	if err != nil {
 		t.Fatalf("Failed to decrypt with message key: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestEncryptWithMessageKeyInvalidKey(t *testing.T) {
 
 	// Test with invalid key length
 	invalidKey := make([]byte, 31)
-	_, err := EncryptWithMessageKey(message, invalidKey)
+	_, err := encryptWithMessageKey(message, invalidKey)
 	if err == nil {
 		t.Error("Expected error for invalid key length, got nil")
 	}
@@ -261,7 +261,7 @@ func TestDecryptWithMessageKeyInvalidKey(t *testing.T) {
 
 	// Test with invalid key length
 	invalidKey := make([]byte, 31)
-	_, err := DecryptWithMessageKey(encrypted, invalidKey)
+	_, err := decryptWithMessageKey(encrypted, invalidKey)
 	if err == nil {
 		t.Error("Expected error for invalid key length, got nil")
 	}
@@ -272,7 +272,7 @@ func TestDecryptWithMessageKeyInvalidKey(t *testing.T) {
 
 func TestEncryptDecryptMessageKey(t *testing.T) {
 	// Generate proper Ed25519 key pair
-	ed25519PublicKey, ed25519PrivateKey, err := GenerateEd25519KeyPair()
+	ed25519PublicKey, ed25519PrivateKey, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestEncryptDecryptMessageKey(t *testing.T) {
 	}
 
 	// Encrypt the message key
-	encryptedKey, err := EncryptMessageKey(messageKey, ed25519PublicKey)
+	encryptedKey, err := encryptMessageKey(messageKey, ed25519PublicKey)
 	if err != nil {
 		t.Fatalf("Failed to encrypt message key: %v", err)
 	}
@@ -313,11 +313,11 @@ func TestEncryptDecryptMessageKey(t *testing.T) {
 
 func TestHybridEncryptDecrypt(t *testing.T) {
 	// Generate proper Ed25519 key pairs
-	ed25519PublicKey1, ed25519PrivateKey1, err := GenerateEd25519KeyPair()
+	ed25519PublicKey1, ed25519PrivateKey1, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair 1: %v", err)
 	}
-	ed25519PublicKey2, ed25519PrivateKey2, err := GenerateEd25519KeyPair()
+	ed25519PublicKey2, ed25519PrivateKey2, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair 2: %v", err)
 	}
@@ -334,8 +334,8 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Fatalf("Failed to hybrid encrypt: %v", err)
 	}
 
-	if hybridMsg.Type != encryptionTypeHybrid {
-		t.Errorf("Expected type %q, got %q", encryptionTypeHybrid, hybridMsg.Type)
+	if hybridMsg.Type != EncryptionTypeHybrid {
+		t.Errorf("Expected type %q, got %q", EncryptionTypeHybrid, hybridMsg.Type)
 	}
 	if hybridMsg.Payload.Nonce == "" {
 		t.Error("Expected non-empty payload nonce")
@@ -347,7 +347,7 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Errorf("Expected 2 encrypted keys, got %d", len(hybridMsg.Keys))
 	}
 
-	decrypted1, err := DecryptHybridMessage(hybridMsg, ed25519PrivateKey1)
+	decrypted1, err := decryptHybridMessage(hybridMsg, ed25519PrivateKey1)
 	if err != nil {
 		t.Fatalf("Failed to decrypt hybrid message with key 1: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Errorf("Expected decrypted message %q, got %q", message, decrypted1)
 	}
 
-	decrypted2, err := DecryptHybridMessage(hybridMsg, ed25519PrivateKey2)
+	decrypted2, err := decryptHybridMessage(hybridMsg, ed25519PrivateKey2)
 	if err != nil {
 		t.Fatalf("Failed to decrypt hybrid message with key 2: %v", err)
 	}
@@ -379,12 +379,12 @@ func TestHybridEncryptInvalidPublicKey(t *testing.T) {
 
 func TestDecryptHybridMessageNoValidKeys(t *testing.T) {
 	// Generate proper Ed25519 key pairs
-	_, ed25519PrivateKey, err := GenerateEd25519KeyPair()
+	_, ed25519PrivateKey, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
 
-	otherPublicKey, _, err := GenerateEd25519KeyPair()
+	otherPublicKey, _, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate other Ed25519 key pair: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestDecryptHybridMessageNoValidKeys(t *testing.T) {
 	}
 
 	// Try to decrypt with our private key (should fail)
-	_, err = DecryptHybridMessage(hybridMsg, ed25519PrivateKey)
+	_, err = decryptHybridMessage(hybridMsg, ed25519PrivateKey)
 	if err == nil {
 		t.Error("Expected error when no valid keys available, got nil")
 	}
@@ -429,7 +429,7 @@ func TestParseEncryptedPayload(t *testing.T) {
 		t.Fatalf("Failed to marshal hybrid message: %v", err)
 	}
 
-	parsed, err := ParseEncryptedPayload(string(hybridJSON))
+	parsed, err := parseEncryptedPayload(string(hybridJSON))
 	if err != nil {
 		t.Fatalf("Failed to parse hybrid payload: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestParseEncryptedPayload(t *testing.T) {
 		t.Fatalf("Failed to marshal encrypted message: %v", err)
 	}
 
-	parsed, err = ParseEncryptedPayload(string(encJSON))
+	parsed, err = parseEncryptedPayload(string(encJSON))
 	if err != nil {
 		t.Fatalf("Failed to parse encrypted payload: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestParseEncryptedPayload(t *testing.T) {
 	}
 
 	// Test parsing invalid JSON
-	_, err = ParseEncryptedPayload("invalid-json")
+	_, err = parseEncryptedPayload("invalid-json")
 	if err == nil {
 		t.Error("Expected error for invalid JSON, got nil")
 	}
@@ -479,7 +479,7 @@ func TestParseEncryptedPayload(t *testing.T) {
 
 func TestEncryptionRoundTripWithRealKeys(t *testing.T) {
 	// Generate proper Ed25519 key pair
-	ed25519PublicKey, ed25519PrivateKey, err := GenerateEd25519KeyPair()
+	ed25519PublicKey, ed25519PrivateKey, err := generateEd25519KeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key pair: %v", err)
 	}
@@ -509,12 +509,12 @@ func TestSymmetricEncryptionEdgeCases(t *testing.T) {
 		t.Fatalf("Failed to generate message key: %v", err)
 	}
 
-	encrypted, err := EncryptWithMessageKey("", messageKey)
+	encrypted, err := encryptWithMessageKey("", messageKey)
 	if err != nil {
 		t.Fatalf("Failed to encrypt empty message: %v", err)
 	}
 
-	decrypted, err := DecryptWithMessageKey(encrypted, messageKey)
+	decrypted, err := decryptWithMessageKey(encrypted, messageKey)
 	if err != nil {
 		t.Fatalf("Failed to decrypt empty message: %v", err)
 	}
@@ -524,12 +524,12 @@ func TestSymmetricEncryptionEdgeCases(t *testing.T) {
 	}
 
 	longMessage := strings.Repeat("A", 10000)
-	encrypted, err = EncryptWithMessageKey(longMessage, messageKey)
+	encrypted, err = encryptWithMessageKey(longMessage, messageKey)
 	if err != nil {
 		t.Fatalf("Failed to encrypt long message: %v", err)
 	}
 
-	decrypted, err = DecryptWithMessageKey(encrypted, messageKey)
+	decrypted, err = decryptWithMessageKey(encrypted, messageKey)
 	if err != nil {
 		t.Fatalf("Failed to decrypt long message: %v", err)
 	}

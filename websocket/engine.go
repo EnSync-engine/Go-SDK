@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -18,36 +21,38 @@ import (
 )
 
 const (
-	defaultConnectionTimeout = 10 * time.Second
-
-	pingInterval = 30 * time.Second
-
-	keyValueParts = 2
+	pingInterval             = 30 * time.Second
+	handlerWorkerCount       = 10
+	keyValueParts            = 2
+	writeChanBufferSize      = 256
+	unsubscribeTimeout       = 500 * time.Millisecond
+	closeSleepDuration       = 100 * time.Millisecond
+	defaultConnectionTimeout = 1 * time.Second
+	jobBufferSize            = 100
 )
+
+type messageCallback struct {
+	resolve chan string
+	reject  chan error
+}
 
 type WebSocketEngine struct {
 	*common.BaseEngine
 	conn             *websocket.Conn
 	messageCallbacks sync.Map
-	mu               sync.Mutex
+	writeChan        chan []byte
+	connMu           sync.Mutex
+	requestMu        sync.Mutex
 }
 
 type wsSubscription struct {
-	baseSubscription
-	eventName    string
+	*common.BaseSubscription
 	autoAck      bool
 	appSecretKey string
+	eventName    string
+	jobs         chan *common.EventPayload
+	workerWg     sync.WaitGroup
 	engine       *WebSocketEngine
-}
-
-type baseSubscription struct {
-	handlers []common.EventHandler
-	mu       sync.RWMutex
-}
-
-type messageCallback struct {
-	resolve chan string
-	reject  chan error
 }
 
 func NewWebSocketEngine(
@@ -69,13 +74,35 @@ func NewWebSocketEngine(
 		return nil, common.NewEnSyncError("failed to create base engine", common.ErrTypeConnection, err)
 	}
 
-	e := &WebSocketEngine{
-		BaseEngine:       baseEngine,
-		messageCallbacks: sync.Map{},
+	u, err := url.Parse(wsURL)
+	if err != nil {
+		return nil, common.NewEnSyncError("invalid WebSocket URL", common.ErrTypeValidation, err)
 	}
 
-	if err := e.connect(wsURL); err != nil {
-		return nil, common.NewEnSyncError("failed to establish WebSocket connection", common.ErrTypeConnection, err)
+	ctx, cancel := context.WithTimeout(ctx, defaultConnectionTimeout)
+	defer cancel()
+
+	dialer := &websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		ReadBufferSize:   4096,
+		WriteBufferSize:  4096,
+	}
+
+	if u.Scheme == schemeWSS {
+		dialer.TLSClientConfig = &tls.Config{
+			ServerName: u.Hostname(),
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
+	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
+	if err != nil {
+		return nil, common.NewEnSyncError("WebSocket connection failed", common.ErrTypeConnection, err)
+	}
+
+	e := &WebSocketEngine{
+		BaseEngine: baseEngine,
+		conn:       conn,
 	}
 
 	return e, nil
@@ -93,22 +120,6 @@ func (e *WebSocketEngine) CreateClient(accessKey string, options ...common.Clien
 		opt(config)
 	}
 
-	if config.AppSecretKey != "" {
-		e.AppSecretKey = config.AppSecretKey
-	}
-	if config.ClientID != "" {
-		e.ClientID = config.ClientID
-	}
-
-	// Ensure WebSocket is connected
-	e.State.Mu.RLock()
-	isConnected := e.State.IsConnected
-	e.State.Mu.RUnlock()
-
-	if !isConnected {
-		return common.NewEnSyncError("WebSocket not connected", common.ErrTypeConnection, nil)
-	}
-
 	if err := e.authenticate(); err != nil {
 		return err
 	}
@@ -116,89 +127,117 @@ func (e *WebSocketEngine) CreateClient(accessKey string, options ...common.Clien
 	return nil
 }
 
-func (e *WebSocketEngine) connect(wsURL string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *WebSocketEngine) authenticate() error {
+	return e.ExecuteOperation(common.Operation{
+		Name: "authenticate",
+		Execute: func(ctx context.Context) error {
+			authMessage := fmt.Sprintf("CONN;ACCESS_KEY=:%s", e.AccessKey)
 
-	if e.conn != nil {
-		return nil
-	}
+			e.connMu.Lock()
+			err := e.conn.WriteMessage(websocket.TextMessage, []byte(authMessage))
+			e.connMu.Unlock()
+			if err != nil {
+				return common.NewEnSyncError("failed to send auth message", common.ErrTypeConnection, err)
+			}
 
-	u, err := url.Parse(wsURL)
-	if err != nil {
-		return common.NewEnSyncError("invalid WebSocket URL", common.ErrTypeValidation, err)
-	}
+			e.connMu.Lock()
+			_, responseBytes, err := e.conn.ReadMessage()
+			e.connMu.Unlock()
+			if err != nil {
+				return common.NewEnSyncError("failed to read auth response", common.ErrTypeConnection, err)
+			}
 
-	ctx, cancel := context.WithTimeout(e.Ctx, defaultConnectionTimeout)
-	defer cancel()
+			response := string(responseBytes)
 
-	dialer := &websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-		ReadBufferSize:   4096,
-		WriteBufferSize:  4096,
-	}
+			if strings.HasPrefix(response, "-FAIL:") {
+				errorMsg := strings.TrimPrefix(response, "-FAIL:")
+				return common.NewEnSyncError("authentication failed: "+errorMsg, common.ErrTypeAuth, nil)
+			}
 
-	if u.Scheme == schemeWSS {
-		dialer.TLSClientConfig = &tls.Config{
-			ServerName: u.Hostname(),
-			MinVersion: tls.VersionTLS12,
-		}
-		e.Logger.Info("Establishing secure WebSocket connection", zap.String("url", wsURL))
-	} else {
-		e.Logger.Warn("Establishing insecure WebSocket connection - development mode", zap.String("url", wsURL))
-	}
+			if !strings.HasPrefix(response, "+PASS:") {
+				return common.NewEnSyncError("unexpected auth response: "+response, common.ErrTypeAuth, nil)
+			}
 
-	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
-	if err != nil {
-		return common.NewEnSyncError("WebSocket connection failed", common.ErrTypeConnection, err)
-	}
+			content := strings.TrimPrefix(response, "+PASS:")
+			resp := parseKeyValue(content)
+			clientID := resp["clientId"]
+			clientHash := resp["clientHash"]
 
-	e.conn = conn
-	e.Logger.Info("WebSocket connection established", zap.String("url", wsURL))
+			if clientID == "" || clientHash == "" {
+				return common.NewEnSyncError(
+					fmt.Sprintf("invalid auth response - clientId: '%s', clientHash: '%s'", clientID, clientHash),
+					common.ErrTypeAuth,
+					nil,
+				)
+			}
 
-	e.State.Mu.Lock()
-	e.State.IsConnected = true
-	e.State.Mu.Unlock()
-
-	go e.handleMessages()
-	go e.startPingInterval()
-
-	return nil
+			e.setAuthenticationResult(clientID, clientHash)
+			return nil
+		},
+	})
 }
 
-func (e *WebSocketEngine) authenticate() error {
-	e.Logger.Info("Attempting authentication")
-
-	// Use custom string protocol
-	authMessage := fmt.Sprintf("CONN;ACCESS_KEY=:%s", e.AccessKey)
-	response, err := e.sendRequest(authMessage)
-	if err != nil {
-		return common.NewEnSyncError("authentication failed", common.ErrTypeAuth, err)
-	}
-
-	if !strings.HasPrefix(response, "+PASS:") {
-		return common.NewEnSyncError("authentication failed: "+response, common.ErrTypeAuth, nil)
-	}
-
+func (e *WebSocketEngine) setAuthenticationResult(clientID, clientHash string) {
 	e.Logger.Info("Authentication successful")
 
-	content := strings.TrimPrefix(response, "+PASS:")
-	resp := parseKeyValue(content)
-
-	e.ClientID = resp["clientId"]
-	e.ClientHash = resp["clientHash"]
+	e.ClientID = clientID
+	e.ClientHash = clientHash
 
 	e.State.Mu.Lock()
 	e.State.IsAuthenticated = true
+	e.State.IsConnected = true
 	e.State.Mu.Unlock()
 
-	return nil
+	e.writeChan = make(chan []byte, writeChanBufferSize)
+
+	go e.writePump()
+	go e.readPump()
+	go e.startPingInterval()
+}
+
+func (e *WebSocketEngine) writePump() {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	defer e.conn.Close()
+	defer e.handleClose()
+
+	for {
+		select {
+		case message, ok := <-e.writeChan:
+			if !ok {
+				e.connMu.Lock()
+				if e.conn != nil {
+					err := e.conn.WriteMessage(websocket.CloseMessage, []byte{})
+					if err != nil {
+						e.Logger.Error("WebSocket close error", zap.Error(err))
+						e.connMu.Unlock()
+						return
+					}
+				}
+				e.connMu.Unlock()
+				return
+			}
+			e.connMu.Lock()
+			if e.conn != nil {
+				if err := e.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+					e.Logger.Error("WebSocket write error", zap.Error(err))
+					e.connMu.Unlock()
+					return
+				}
+				e.connMu.Unlock()
+			} else {
+				e.connMu.Unlock()
+				return
+			}
+		case <-e.Ctx.Done():
+			return
+		}
+	}
 }
 
 func (e *WebSocketEngine) startPingInterval() {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-e.Ctx.Done():
@@ -207,29 +246,36 @@ func (e *WebSocketEngine) startPingInterval() {
 			e.State.Mu.RLock()
 			isConnected := e.State.IsConnected
 			e.State.Mu.RUnlock()
-
 			if !isConnected {
 				continue
 			}
-
-			e.mu.Lock()
+			e.connMu.Lock()
 			if e.conn != nil {
+				deadline := time.Now().Add(defaultConnectionTimeout)
+				if err := e.conn.SetWriteDeadline(deadline); err != nil {
+					e.Logger.Error("Failed to set write deadline for ping", zap.Error(err))
+					e.connMu.Unlock()
+					e.handleClose()
+					return
+				}
+
 				if err := e.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 					e.Logger.Error("Ping failed", zap.Error(err))
+					e.connMu.Unlock()
 					e.handleClose()
+					return
 				}
 			}
-			e.mu.Unlock()
+			e.connMu.Unlock()
 		}
 	}
 }
 
-func (e *WebSocketEngine) handleMessages() {
-	defer func() {
-		if r := recover(); r != nil {
-			e.Logger.Error("Message handler panic", zap.Any("panic", r))
-		}
-	}()
+func (e *WebSocketEngine) readPump() {
+	defer e.handleClose()
+	e.conn.SetPongHandler(func(appData string) error {
+		return nil
+	})
 
 	for {
 		select {
@@ -239,27 +285,27 @@ func (e *WebSocketEngine) handleMessages() {
 			_, message, err := e.conn.ReadMessage()
 			if err != nil {
 				e.Logger.Error("WebSocket read error", zap.Error(err))
-				e.handleClose()
+				e.State.Mu.Lock()
+				e.State.IsConnected = false
+				e.State.Mu.Unlock()
 				return
 			}
 
 			msg := string(message)
 
-			// Handle PING
 			if msg == "PING" {
 				if err := e.conn.WriteMessage(websocket.TextMessage, []byte("PONG")); err != nil {
-					e.Logger.Error("Failed to send PONG", map[string]interface{}{"error": err.Error()})
+					e.Logger.Error("Failed to send PONG", zap.Error(err))
+					return
 				}
 				continue
 			}
 
-			// Handle event messages
 			if strings.HasPrefix(msg, "+RECORD:") {
-				e.handleEventMessage(msg)
+				e.handleEvent(msg)
 				continue
 			}
 
-			// Handle responses
 			if strings.HasPrefix(msg, "+PASS:") || strings.HasPrefix(msg, "+REPLAY:") || strings.HasPrefix(msg, "-FAIL:") {
 				e.handleResponseMessage(msg)
 			}
@@ -272,7 +318,6 @@ func (e *WebSocketEngine) handleClose() {
 	e.State.IsConnected = false
 	e.State.IsAuthenticated = false
 	e.State.Mu.Unlock()
-
 	e.Logger.Info("WebSocket closed")
 }
 
@@ -283,21 +328,8 @@ func (e *WebSocketEngine) Publish(
 	metadata *common.EventMetadata,
 	options *common.PublishOptions,
 ) (string, error) {
-	e.State.Mu.RLock()
-	isAuth := e.State.IsAuthenticated
-	e.State.Mu.RUnlock()
-
-	if !isAuth {
-		return "", common.NewEnSyncError("not authenticated", common.ErrTypeAuth, nil)
-	}
-
-	if len(recipients) == 0 {
-		return "", common.NewEnSyncError("recipients required", common.ErrTypeValidation, nil)
-	}
-
-	useHybridEncryption := true
-	if options != nil {
-		useHybridEncryption = options.UseHybridEncryption
+	if err := e.ValidatePublishInput(eventName, recipients); err != nil {
+		return "", err
 	}
 
 	if metadata == nil {
@@ -307,25 +339,29 @@ func (e *WebSocketEngine) Publish(
 		}
 	}
 
-	payloadMeta := common.AnalyzePayload(payload)
-	payloadMetaJSON, _ := json.Marshal(payloadMeta)
-
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		return "", common.NewEnSyncError("failed to marshal payload", common.ErrTypePublish, err)
+	useHybridEncryption := true
+	if options != nil {
+		useHybridEncryption = options.UseHybridEncryption
 	}
 
-	metadataJSON, err := json.Marshal(metadata)
+	publishData, err := e.PreparePublishData(payload, metadata)
 	if err != nil {
-		return "", common.NewEnSyncError("failed to marshal metadata", common.ErrTypePublish, err)
+		return "", err
 	}
 
 	var responses []string
 
 	if useHybridEncryption && len(recipients) > 1 {
-		err = e.publishHybrid(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, &responses)
+		err = e.publishHybrid(eventName, recipients, publishData.PayloadJSON, publishData.MetadataJSON, publishData.PayloadMetaJSON, &responses)
 	} else {
-		err = e.publishIndividual(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, &responses)
+		err = e.publishIndividual(
+			eventName,
+			recipients,
+			publishData.PayloadJSON,
+			publishData.MetadataJSON,
+			publishData.PayloadMetaJSON,
+			&responses,
+		)
 	}
 
 	if err != nil {
@@ -353,15 +389,33 @@ func (e *WebSocketEngine) publishHybrid(
 
 	encryptedBase64 := base64.StdEncoding.EncodeToString(hybridJSON)
 
-	for _, recipient := range recipients {
-		message := fmt.Sprintf("PUB;CLIENT_ID=:%s;EVENT_NAME=:%s;PAYLOAD=:%s;DELIVERY_TO=:%s;METADATA=:%s;PAYLOAD_METADATA=:%s",
-			e.ClientID, eventName, encryptedBase64, recipient, string(metadataJSON), string(payloadMetaJSON))
+	baseMessage := fmt.Sprintf("PUB;CLIENT_ID=:%s;EVENT_NAME=:%s;PAYLOAD=%s;METADATA=:%s;PAYLOAD_METADATA=:%s",
+		e.ClientID, eventName, encryptedBase64, string(metadataJSON), string(payloadMetaJSON))
 
-		resp, err := e.sendRequest(message)
-		if err != nil {
-			return err
-		}
-		*responses = append(*responses, resp)
+	var eg errgroup.Group
+	resultsChan := make(chan string, len(recipients))
+
+	for _, recipient := range recipients {
+		eg.Go(func() error {
+			fullMessage := fmt.Sprintf("%s;DELIVERY_TO=%s", baseMessage, recipient)
+			resp, err := e.sendRequest(fullMessage)
+			if err != nil {
+				return err
+			}
+			resultsChan <- resp
+			return nil
+		})
+	}
+
+	err = eg.Wait()
+	close(resultsChan)
+
+	if err != nil {
+		return err
+	}
+
+	for res := range resultsChan {
+		*responses = append(*responses, res)
 	}
 	return nil
 }
@@ -372,53 +426,61 @@ func (e *WebSocketEngine) publishIndividual(
 	payloadJSON, metadataJSON, payloadMetaJSON []byte,
 	responses *[]string,
 ) error {
+	baseMessage := fmt.Sprintf("PUB;CLIENT_ID=:%s;EVENT_NAME=:%s;METADATA=:%s;PAYLOAD_METADATA=:%s",
+		e.ClientID, eventName, string(metadataJSON), string(payloadMetaJSON))
+
+	var eg errgroup.Group
+	resultsChan := make(chan string, len(recipients))
+
 	for _, recipient := range recipients {
-		recipientKey, err := base64.StdEncoding.DecodeString(recipient)
-		if err != nil {
-			return common.NewEnSyncError("invalid recipient key", common.ErrTypePublish, err)
-		}
+		eg.Go(func() error {
+			recipientKey, err := base64.StdEncoding.DecodeString(recipient)
+			if err != nil {
+				return common.NewEnSyncError("invalid recipient key", common.ErrTypePublish, err)
+			}
 
-		encrypted, err := common.EncryptEd25519(string(payloadJSON), recipientKey)
-		if err != nil {
-			return common.NewEnSyncError("encryption failed", common.ErrTypePublish, err)
-		}
+			encrypted, err := common.EncryptEd25519(string(payloadJSON), recipientKey)
+			if err != nil {
+				return common.NewEnSyncError("encryption failed", common.ErrTypePublish, err)
+			}
 
-		encryptedJSON, err := json.Marshal(encrypted)
-		if err != nil {
-			return common.NewEnSyncError("failed to marshal encrypted message", common.ErrTypePublish, err)
-		}
+			encryptedJSON, err := json.Marshal(encrypted)
+			if err != nil {
+				return common.NewEnSyncError("failed to marshal encrypted message", common.ErrTypePublish, err)
+			}
 
-		encryptedBase64 := base64.StdEncoding.EncodeToString(encryptedJSON)
+			encryptedBase64 := base64.StdEncoding.EncodeToString(encryptedJSON)
 
-		message := fmt.Sprintf("PUB;CLIENT_ID=:%s;EVENT_NAME=:%s;PAYLOAD=:%s;DELIVERY_TO=:%s;METADATA=:%s;PAYLOAD_METADATA=:%s",
-			e.ClientID, eventName, encryptedBase64, recipient, string(metadataJSON), string(payloadMetaJSON))
+			fullMessage := fmt.Sprintf("%s;PAYLOAD=:%s;DELIVERY_TO=:%s", baseMessage, encryptedBase64, recipient)
+			resp, err := e.sendRequest(fullMessage)
+			if err != nil {
+				return err
+			}
+			resultsChan <- resp
+			return nil
+		})
+	}
 
-		resp, err := e.sendRequest(message)
-		if err != nil {
-			return err
-		}
-		*responses = append(*responses, resp)
+	err := eg.Wait()
+	close(resultsChan)
+
+	if err != nil {
+		return err
+	}
+
+	for res := range resultsChan {
+		*responses = append(*responses, res)
 	}
 	return nil
 }
 
 func (e *WebSocketEngine) Subscribe(eventName string, options *common.SubscribeOptions) (common.Subscription, error) {
-	e.State.Mu.RLock()
-	isAuth := e.State.IsAuthenticated
-	e.State.Mu.RUnlock()
-
-	if !isAuth {
-		return nil, common.NewEnSyncError("not authenticated", common.ErrTypeAuth, nil)
+	if err := e.ValidateSubscribeInput(eventName); err != nil {
+		return nil, err
 	}
 
 	if options == nil {
-		options = &common.SubscribeOptions{
-			AutoAck: true,
-		}
-	}
-
-	if e.SubscriptionMgr.Exists(eventName) {
-		return nil, common.NewEnSyncError("already subscribed to event: "+eventName, common.ErrTypeSubscription, nil)
+		options = &common.SubscribeOptions{AutoAck: true}
 	}
 
 	message := fmt.Sprintf("SUB;CLIENT_ID=:%s;EVENT_NAME=:%s", e.ClientID, eventName)
@@ -432,68 +494,34 @@ func (e *WebSocketEngine) Subscribe(eventName string, options *common.SubscribeO
 	}
 
 	sub := &wsSubscription{
-		baseSubscription: baseSubscription{
-			handlers: make([]common.EventHandler, 0),
-		},
-		eventName:    eventName,
-		autoAck:      options.AutoAck,
-		appSecretKey: options.AppSecretKey,
-		engine:       e,
+		BaseSubscription: &common.BaseSubscription{Handlers: make([]common.EventHandler, 0)},
+		eventName:        eventName,
+		autoAck:          options.AutoAck,
+		appSecretKey:     options.AppSecretKey,
+		jobs:             make(chan *common.EventPayload, jobBufferSize),
+		engine:           e,
 	}
+
+	sub.startWorkerPool()
 
 	e.SubscriptionMgr.Store(eventName, sub)
 	e.Logger.Info("Successfully subscribed", zap.String("eventName", eventName))
-
 	return sub, nil
 }
 
-func (e *WebSocketEngine) sendMessage(message string) (string, error) {
-	messageID := fmt.Sprintf("%d", time.Now().UnixNano())
-
-	callback := &messageCallback{
-		resolve: make(chan string, 1),
-		reject:  make(chan error, 1),
+func (s *wsSubscription) startWorkerPool() {
+	for i := 0; i < handlerWorkerCount; i++ {
+		s.workerWg.Add(1)
+		go func() {
+			defer s.workerWg.Done()
+			for event := range s.jobs {
+				s.CallHandlers(event, s.engine.Logger)
+			}
+		}()
 	}
-
-	e.messageCallbacks.Store(messageID, callback)
-	defer e.messageCallbacks.Delete(messageID)
-
-	// Send the message
-	e.mu.Lock()
-	err := e.conn.WriteMessage(websocket.TextMessage, []byte(message))
-	e.mu.Unlock()
-
-	if err != nil {
-		return "", common.NewEnSyncError("failed to send message", common.ErrTypeConnection, err)
-	}
-
-	// Wait for response without timeout - let retry logic handle failures
-	select {
-	case resp := <-callback.resolve:
-		return resp, nil
-	case err := <-callback.reject:
-		return "", err
-	case <-e.Ctx.Done():
-		return "", e.Ctx.Err()
-	}
-}
-
-func (e *WebSocketEngine) sendRequest(message string) (string, error) {
-	var response string
-	err := e.WithRetry(e.Ctx, func() error {
-		resp, err := e.sendMessage(message)
-		if err != nil {
-			return err
-		}
-		response = resp
-		return nil
-	})
-
-	return response, err
 }
 
 func (e *WebSocketEngine) handleResponseMessage(msg string) {
-	// Handle responses using FIFO approach (oldest callback first)
 	e.messageCallbacks.Range(func(key, value interface{}) bool {
 		callback := value.(*messageCallback)
 		e.messageCallbacks.Delete(key)
@@ -509,71 +537,97 @@ func (e *WebSocketEngine) handleResponseMessage(msg string) {
 			default:
 			}
 		}
-		return false // Only handle the first (oldest) callback
+		return false
 	})
 }
 
-func (e *WebSocketEngine) handleEventMessage(msg string) {
+func (e *WebSocketEngine) sendRequest(message string) (string, error) {
+	e.requestMu.Lock()
+	defer e.requestMu.Unlock()
+	var response string
+	err := e.ExecuteOperation(common.Operation{
+		Name: "sendRequest",
+		Execute: func(ctx context.Context) error {
+			resp, err := e.sendMessageWithContext(ctx, message)
+			if err != nil {
+				return err
+			}
+			response = resp
+			return nil
+		},
+	})
+
+	return response, err
+}
+
+func (e *WebSocketEngine) handleEvent(msg string) {
 	event := parseEventMessage(msg)
 	if event == nil {
+		e.Logger.Error("Failed to parse event message", zap.String("message", msg))
 		return
 	}
 
 	if val, exists := e.SubscriptionMgr.Load(event.EventName); exists {
 		sub := val.(*wsSubscription)
-
 		processedEvent, err := sub.decryptEvent(event)
 		if err != nil {
 			sub.engine.Logger.Error("Failed to decrypt event", zap.Error(err))
 			return
 		}
 
-		handlers := sub.GetHandlers()
-		for _, handler := range handlers {
-			go func(h common.EventHandler) {
-				defer func() {
-					if r := recover(); r != nil {
-						sub.engine.Logger.Error("Handler panic", zap.Any("panic", r))
-					}
-				}()
-				if err := h(processedEvent); err != nil {
-					sub.engine.Logger.Error("Event handler error", zap.Error(err))
-				}
-			}(handler)
-		}
+		sub.jobs <- processedEvent
 
 		if sub.autoAck && processedEvent.Idem != "" && processedEvent.Block != 0 {
 			if err := sub.Ack(processedEvent.Idem, processedEvent.Block); err != nil {
-				sub.engine.Logger.Error("Auto-acknowledge error", zap.Error(err))
+				sub.engine.Logger.Error("Auto-ack error", zap.Error(err))
 			}
 		}
+	} else {
+		e.Logger.Error("No subscription found for event",
+			zap.String("eventName", event.EventName))
 	}
 }
 
 func (e *WebSocketEngine) Close() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.connMu.Lock()
+	defer e.connMu.Unlock()
 
 	if e.conn != nil {
-		e.SubscriptionMgr.Range(func(key, value interface{}) bool {
-			if sub, ok := value.(*wsSubscription); ok {
-				if err := sub.Unsubscribe(); err != nil {
-					e.Logger.Error("Failed to unsubscribe", map[string]interface{}{"error": err.Error()})
-				}
-			}
-			return true
-		})
-
-		err := e.conn.Close()
-		e.conn = nil
-
 		e.State.Mu.Lock()
+		isConnected := e.State.IsConnected
 		e.State.IsConnected = false
 		e.State.IsAuthenticated = false
 		e.State.Mu.Unlock()
 
+		if isConnected {
+			e.SubscriptionMgr.Range(func(key, value interface{}) bool {
+				if sub, ok := value.(*wsSubscription); ok {
+					ctx, cancel := context.WithTimeout(e.Ctx, unsubscribeTimeout)
+					defer cancel()
+
+					go func() {
+						if err := sub.unsubscribeWithContext(ctx); err != nil {
+							e.Logger.Error("Failed to unsubscribe during close",
+								zap.String("event", sub.eventName),
+								zap.Error(err))
+						}
+					}()
+				}
+				return true
+			})
+
+			time.Sleep(closeSleepDuration)
+		}
+
+		if e.writeChan != nil {
+			close(e.writeChan)
+		}
+
+		err := e.conn.Close()
+		e.conn = nil
 		return err
 	}
+
 	e.Logger.Info("WebSocket already closed")
 	return nil
 }
@@ -599,77 +653,68 @@ func parseEventMessage(message string) *common.EventPayload {
 	if !strings.HasPrefix(message, "+RECORD:") && !strings.HasPrefix(message, "+REPLAY:") {
 		return nil
 	}
-
 	content := strings.TrimPrefix(message, "+RECORD:")
 	content = strings.TrimPrefix(content, "+REPLAY:")
-
 	var record struct {
 		Name     string                 `json:"name"`
 		Idem     string                 `json:"idem"`
 		ID       string                 `json:"id"`
-		Block    int64                  `json:"block"`
+		Block    interface{}            `json:"block"`
 		Payload  string                 `json:"payload"`
 		LoggedAt int64                  `json:"loggedAt"`
 		Metadata map[string]interface{} `json:"metadata"`
 		Sender   string                 `json:"sender"`
 	}
-
 	if err := json.Unmarshal([]byte(content), &record); err != nil {
 		return nil
 	}
-
 	idem := record.Idem
 	if idem == "" {
 		idem = record.ID
 	}
-
+	if record.Metadata == nil {
+		record.Metadata = make(map[string]interface{})
+	}
+	var blockNum int64
+	switch v := record.Block.(type) {
+	case string:
+		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+			blockNum = parsed
+		} else {
+			return nil
+		}
+	case float64:
+		blockNum = int64(v)
+	case int64:
+		blockNum = v
+	case int:
+		blockNum = int64(v)
+	default:
+		return nil
+	}
+	if record.Payload != "" {
+		record.Metadata["_encryptedPayload"] = record.Payload
+	}
 	return &common.EventPayload{
 		EventName: record.Name,
 		Idem:      idem,
-		Block:     record.Block,
+		Block:     blockNum,
 		Timestamp: time.UnixMilli(record.LoggedAt),
-		Payload:   nil, // Will be decrypted later
+		Payload:   nil,
 		Metadata:  record.Metadata,
 		Sender:    record.Sender,
 	}
 }
 
 func (s *wsSubscription) Ack(eventIdem string, block int64) error {
-	message := fmt.Sprintf("ACK;CLIENT_ID=:%s;EVENT_IDEM=:%s;EVENT_NAME=:%s;PARTITION_BLOCK=:%d",
-		s.engine.ClientID, eventIdem, s.eventName, block)
+	message := fmt.Sprintf("ACK;CLIENT_ID=:%s;EVENT_IDEM=:%s;BLOCK=:%d;EVENT_NAME=:%s",
+		s.engine.ClientID, eventIdem, block, s.eventName)
 
 	_, err := s.engine.sendRequest(message)
 	if err != nil {
 		return common.NewEnSyncError("ack failed", common.ErrTypeGeneric, err)
 	}
 	return nil
-}
-
-func (s *wsSubscription) AddHandler(handler common.EventHandler) func() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.handlers = append(s.handlers, handler)
-
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		for i, h := range s.handlers {
-			if fmt.Sprintf("%p", h) == fmt.Sprintf("%p", handler) {
-				s.handlers = append(s.handlers[:i], s.handlers[i+1:]...)
-				break
-			}
-		}
-	}
-}
-
-func (s *wsSubscription) GetHandlers() []common.EventHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	handlers := make([]common.EventHandler, len(s.handlers))
-	copy(handlers, s.handlers)
-	return handlers
 }
 
 func (s *wsSubscription) Defer(eventIdem string, delayMs int64, reason string) (*common.DeferResponse, error) {
@@ -747,7 +792,7 @@ func (s *wsSubscription) Replay(eventIdem string) (*common.EventPayload, error) 
 }
 
 func (s *wsSubscription) Rollback(eventIdem string, block int64) error {
-	message := fmt.Sprintf("ROLLBACK;CLIENT_ID=:%s;EVENT_IDEM=:%s;PARTITION_BLOCK=:%d",
+	message := fmt.Sprintf("ROLLBACK;CLIENT_ID=:%s;EVENT_IDEM=:%s;PARTITION_BLOCK=%d",
 		s.engine.ClientID, eventIdem, block)
 
 	_, err := s.engine.sendRequest(message)
@@ -758,29 +803,98 @@ func (s *wsSubscription) Rollback(eventIdem string, block int64) error {
 }
 
 func (s *wsSubscription) Unsubscribe() error {
-	message := fmt.Sprintf("UNSUB;CLIENT_ID=:%s;EVENT_NAME=:%s", s.engine.ClientID, s.eventName)
-
-	response, err := s.engine.sendRequest(message)
-	if err != nil {
-		return common.NewEnSyncError("unsubscribe failed", common.ErrTypeSubscription, err)
-	}
-
-	if !strings.HasPrefix(response, "+PASS:") {
-		return common.NewEnSyncError("unsubscribe failed: "+response, common.ErrTypeSubscription, nil)
-	}
-
-	s.engine.SubscriptionMgr.Delete(s.eventName)
-	s.engine.Logger.Info("Successfully unsubscribed", zap.String("eventName", s.eventName))
-	return nil
+	ctx, cancel := context.WithTimeout(s.engine.Ctx, unsubscribeTimeout)
+	defer cancel()
+	return s.unsubscribeWithContext(ctx)
 }
 
 func (s *wsSubscription) decryptEvent(event *common.EventPayload) (*common.EventPayload, error) {
-	// This would implement the full decryption logic
-	// For now, returning the event as-is
-	return event, nil
+	encryptedPayloadRaw, exists := event.Metadata["_encryptedPayload"]
+	if !exists {
+		return event, nil
+	}
+
+	encryptedPayloadBase64, ok := encryptedPayloadRaw.(string)
+	if !ok || encryptedPayloadBase64 == "" {
+		return event, nil
+	}
+
+	decryptedPayload, err := s.engine.DecryptEventPayload(encryptedPayloadBase64, s.appSecretKey)
+	if err != nil {
+		return nil, err
+	}
+
+	decryptedEvent := &common.EventPayload{
+		EventName: event.EventName,
+		Idem:      event.Idem,
+		Block:     event.Block,
+		Timestamp: event.Timestamp,
+		Payload:   decryptedPayload,
+		Metadata:  event.Metadata,
+		Sender:    event.Sender,
+	}
+
+	delete(decryptedEvent.Metadata, "_encryptedPayload")
+
+	return decryptedEvent, nil
 }
 
-// AnalyzePayload analyzes a payload and returns metadata
-func (e *WebSocketEngine) AnalyzePayload(payload map[string]interface{}) *common.PayloadMetadata {
-	return common.AnalyzePayload(payload)
+func (s *wsSubscription) unsubscribeWithContext(context.Context) error {
+	message := fmt.Sprintf("UNSUB;CLIENT_ID=:%s;EVENT_NAME=:%s", s.engine.ClientID, s.eventName)
+	_, err := s.engine.sendRequest(message)
+	if err != nil {
+		return common.NewEnSyncError("unsubscribe failed", common.ErrTypeSubscription, err)
+	}
+	s.engine.SubscriptionMgr.Delete(s.eventName)
+	s.Mu.Lock()
+	s.Handlers = nil
+	if s.jobs != nil {
+		close(s.jobs)
+	}
+	s.Mu.Unlock()
+	s.workerWg.Wait()
+	return nil
+}
+
+func (e *WebSocketEngine) sendMessageWithContext(ctx context.Context, message string) (string, error) {
+	messageID := fmt.Sprintf("%d", time.Now().UnixNano())
+	callback := &messageCallback{resolve: make(chan string, 1), reject: make(chan error, 1)}
+
+	e.messageCallbacks.Store(messageID, callback)
+	defer e.messageCallbacks.Delete(messageID)
+
+	fullMessage := fmt.Sprintf("%s;MSG_ID=:%s", message, messageID)
+
+	e.State.Mu.RLock()
+	isConnected := e.State.IsConnected
+	e.State.Mu.RUnlock()
+
+	if !isConnected {
+		return "", common.NewEnSyncError("connection not established", common.ErrTypeConnection, nil)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			e.Logger.Error("Recovered from panic in sendMessageWithContext", zap.Any("panic", r))
+		}
+	}()
+
+	select {
+	case e.writeChan <- []byte(fullMessage):
+	case <-ctx.Done():
+		return "", common.NewEnSyncError("write channel blocked", common.ErrTypeConnection, ctx.Err())
+	case <-e.Ctx.Done():
+		return "", common.NewEnSyncError("engine context canceled", common.ErrTypeConnection, e.Ctx.Err())
+	}
+
+	select {
+	case resp := <-callback.resolve:
+		return resp, nil
+	case err := <-callback.reject:
+		return "", err
+	case <-ctx.Done():
+		return "", common.NewEnSyncError("message timeout", common.ErrTypeConnection, ctx.Err())
+	case <-e.Ctx.Done():
+		return "", common.NewEnSyncError("engine context canceled", common.ErrTypeConnection, e.Ctx.Err())
+	}
 }
