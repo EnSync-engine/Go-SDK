@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- operationTimeout and WithOperationTimeout option to engine config
+- DecryptEventPayload, PreparePublishData, and improved input validation in BaseEngine
+- Unified payload metadata analysis and internal PublishData struct
+
+### Changed
+- gRPC and WebSocket engines now use new publish and subscribe validation and data preparation
+- Improved test coverage and updated tests for new function names and signatures
+
+### Fixed
+- Naming and visibility for crypto helpers (e.g., encryptWithMessageKey, decryptHybridMessage)
+- Subscription handler locking and event processing
+
+### Other
+- Updated go.mod and go.sum for Go 1.24 and new dependencies
+
 ## [0.1.4] - 2025-10-18
 
 ### Added
