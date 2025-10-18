@@ -94,7 +94,7 @@ func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 	addr := startSimpleMockGRPCServer(t)
 
 	// Create a new gRPC engine
-	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)
+	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr, common.WithOperationTimeout(5*time.Second))
 	if err != nil {
 		t.Fatalf("Failed to create gRPC engine: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestGRPCEngineConnectionAndAuth(t *testing.T) {
 	addr := startSimpleMockGRPCServer(t)
 
 	// Test connection creation
-	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)
+	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr, common.WithOperationTimeout(5*time.Second))
 	if err != nil {
 		t.Fatalf("Failed to create gRPC engine: %v", err)
 	}

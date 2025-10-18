@@ -8,18 +8,18 @@ import (
 type BaseSubscription struct {
 	EventName string
 	Handlers  []EventHandler
-	mu        sync.RWMutex
+	Mu        sync.RWMutex
 }
 
 func (s *BaseSubscription) AddHandler(handler EventHandler) func() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
 
 	s.Handlers = append(s.Handlers, handler)
 
 	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+		s.Mu.Lock()
+		defer s.Mu.Unlock()
 
 		for i, h := range s.Handlers {
 			if fmt.Sprintf("%p", h) == fmt.Sprintf("%p", handler) {
@@ -31,8 +31,8 @@ func (s *BaseSubscription) AddHandler(handler EventHandler) func() {
 }
 
 func (s *BaseSubscription) GetHandlers() []EventHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
 	handlers := make([]EventHandler, len(s.Handlers))
 	copy(handlers, s.Handlers)
 	return handlers

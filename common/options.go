@@ -3,16 +3,18 @@ package common
 import "time"
 
 type engineConfig struct {
-	logger         Logger
-	circuitBreaker *circuitBreakerConfig
-	retryConfig    *retryConfig
+	logger           Logger
+	circuitBreaker   *circuitBreakerConfig
+	retryConfig      *retryConfig
+	operationTimeout time.Duration
 }
 
 func defaultEngineConfig() *engineConfig {
 	return &engineConfig{
-		circuitBreaker: defaultCircuitBreakerConfig(),
-		retryConfig:    defaultRetryConfig(),
-		logger:         &noopLogger{},
+		circuitBreaker:   defaultCircuitBreakerConfig(),
+		retryConfig:      defaultRetryConfig(),
+		logger:           &noopLogger{},
+		operationTimeout: operationTimeout,
 	}
 }
 
@@ -45,6 +47,12 @@ func WithRetryConfig(maxAttempts int, initialBackoff, maxBackoff time.Duration, 
 			MaxBackoff:     maxBackoff,
 			Jitter:         jitter,
 		}
+	}
+}
+
+func WithOperationTimeout(timeout time.Duration) Option {
+	return func(c *engineConfig) {
+		c.operationTimeout = timeout
 	}
 }
 
