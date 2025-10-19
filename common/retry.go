@@ -33,13 +33,15 @@ func defaultRetryConfig() *retryConfig {
 }
 
 func (b *BaseEngine) Retry(ctx context.Context, fn func() error, cfg *retryConfig) error {
+	if cfg.MaxAttempts <= 0 {
+		return NewEnSyncError("invalid retry config: MaxAttempts must be > 0", ErrTypeValidation, nil)
+	}
+
 	var attempt int
 	var lastErr error
 
-	for {
-		attempt++
-
-		// Check circuit breaker
+	for attempt < cfg.MaxAttempts {
+		// Check circuit breaker *before* any attempt. This ensures we fail fast.
 		if !b.canAttemptConnection() {
 			return NewEnSyncError(
 				"circuit breaker open",
@@ -51,9 +53,7 @@ func (b *BaseEngine) Retry(ctx context.Context, fn func() error, cfg *retryConfi
 		// Execute the operation
 		err := fn()
 		if err == nil {
-			if attempt == 1 {
-				b.recordSuccess() // Only record success on first attempt
-			}
+			b.recordSuccess()
 			return nil
 		}
 		lastErr = err
@@ -64,14 +64,9 @@ func (b *BaseEngine) Retry(ctx context.Context, fn func() error, cfg *retryConfi
 			return err
 		}
 
-		// Check max attempts
+		attempt++
 		if attempt >= cfg.MaxAttempts {
-			b.recordFailure()
-			return NewEnSyncError(
-				"max retry attempts reached",
-				ErrTypeMaxRetries,
-				lastErr,
-			)
+			break // Exit loop to return max retries error
 		}
 
 		// Calculate backoff with jitter
@@ -80,24 +75,46 @@ func (b *BaseEngine) Retry(ctx context.Context, fn func() error, cfg *retryConfi
 		// Wait or return if context is done
 		select {
 		case <-ctx.Done():
+			b.recordFailure()
 			return ctx.Err()
 		case <-time.After(backoff):
 			// Continue to next attempt
 		}
 	}
+
+	b.recordFailure()
+	return NewEnSyncError(
+		"max retry attempts reached",
+		ErrTypeMaxRetries,
+		lastErr,
+	)
 }
 
 func (b *BaseEngine) calculateBackoff(cfg *retryConfig, attempt int) time.Duration {
-	if attempt == 0 {
+	if attempt <= 0 {
 		return 0
 	}
 
-	backoff := float64(cfg.InitialBackoff) * math.Pow(retryBackoffBase, float64(attempt-1))
+	// Ensure attempt is bounded to prevent overflow
+	maxExponent := 30
+	exponent := attempt - 1
+	if exponent > maxExponent {
+		exponent = maxExponent
+	}
+
+	backoff := float64(cfg.InitialBackoff) * math.Pow(retryBackoffBase, float64(exponent))
 	if maxBackoff := float64(cfg.MaxBackoff); backoff > maxBackoff {
 		backoff = maxBackoff
 	}
 
-	backoff *= (1 + cfg.Jitter*(2*secureRandFloat64()-1))
+	jitterFactor := 1 + cfg.Jitter*(2*secureRandFloat64()-1)
+	backoff *= jitterFactor
+
+	// Ensure backoff doesn't go negative due to jitter
+	if backoff < 0 {
+		backoff = 0
+	}
+
 	return time.Duration(backoff)
 }
 
@@ -106,17 +123,27 @@ func isRetryableError(err error) bool {
 		return false
 	}
 
+	// Check context errors first
 	if errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, context.Canceled) {
 		return true
 	}
 
+	// Check I/O errors
 	if errors.Is(err, io.EOF) ||
-		errors.Is(err, io.ErrUnexpectedEOF) ||
-		strings.Contains(err.Error(), "connection") {
+		errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 
+	// Check for connection-related errors in the error message
+	errMsg := strings.ToLower(err.Error())
+	if strings.Contains(errMsg, "connection") ||
+		strings.Contains(errMsg, "timeout") ||
+		strings.Contains(errMsg, "temporary") {
+		return true
+	}
+
+	// Check gRPC status codes
 	if grpcStatus, ok := status.FromError(err); ok {
 		//nolint:exhaustive // We intentionally handle only specific retryable gRPC error codes
 		switch grpcStatus.Code() {

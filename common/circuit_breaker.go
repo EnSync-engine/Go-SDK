@@ -62,28 +62,6 @@ func newCircuitBreaker(config *circuitBreakerConfig, logger Logger) *circuitBrea
 	}
 }
 
-func (cb *circuitBreaker) getResetTimeout() time.Duration {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-
-	if cb.failures == 0 {
-		return 0
-	}
-
-	// Calculate exponential backoff
-	exp := math.Pow(exponentialBase, float64(cb.failures-1))
-	backoff := float64(cb.config.ResetTimeout) * exp
-
-	// Cap at max reset timeout
-	if backoff > float64(cb.config.MaxResetTimeout) {
-		backoff = float64(cb.config.MaxResetTimeout)
-	}
-
-	// Add jitter (0.8x to 1.2x of backoff)
-	jitter := 0.8 + 0.4*secureRandFloat64()
-	return time.Duration(backoff * jitter)
-}
-
 func (cb *circuitBreaker) RecordFailure() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -92,16 +70,23 @@ func (cb *circuitBreaker) RecordFailure() {
 	cb.successes = 0 // Reset success counter on failure
 	cb.lastFailureTime = time.Now()
 
-	// Check if we should open the circuit
 	if cb.failures >= cb.config.FailureThreshold && cb.state != circuitStateOpen {
 		prevState := cb.state
 		cb.state = circuitStateOpen
+
+		// Calculate the reset timeout *inside* the write lock to avoid a deadlock.
+		exp := math.Pow(exponentialBase, float64(cb.failures-1))
+		backoff := float64(cb.config.ResetTimeout) * exp
+		if backoff > float64(cb.config.MaxResetTimeout) {
+			backoff = float64(cb.config.MaxResetTimeout)
+		}
+		resetTimeout := time.Duration(backoff)
 
 		if cb.logger != nil {
 			cb.logger.Warn("Circuit breaker opened",
 				"failures", cb.failures,
 				"prev_state", prevState,
-				"reset_timeout", cb.getResetTimeout())
+				"reset_timeout", resetTimeout)
 		}
 	}
 }
@@ -139,41 +124,29 @@ func (cb *circuitBreaker) RecordSuccess() {
 }
 
 func (cb *circuitBreaker) canAttempt() bool {
-	cb.mu.RLock()
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 
 	switch cb.state {
 	case circuitStateClosed:
-		cb.mu.RUnlock()
 		return true
 
 	case circuitStateHalfOpen:
-		cb.mu.RUnlock()
 		return true
 
 	case circuitStateOpen:
 		resetTimeout := cb.getResetTimeout()
 		timeSinceFailure := time.Since(cb.lastFailureTime)
-
 		if timeSinceFailure > resetTimeout {
-			// Need to upgrade to write lock
-			cb.mu.RUnlock()
-			cb.mu.Lock()
+			// Transition to half-open while holding the lock
+			cb.state = circuitStateHalfOpen
+			cb.successes = 0
 
-			// Double-check with write lock
-			if cb.state == circuitStateOpen && time.Since(cb.lastFailureTime) > resetTimeout {
-				cb.state = circuitStateHalfOpen
-				if cb.logger != nil {
-					cb.logger.Info("Circuit breaker half-open after timeout",
-						"timeout", resetTimeout,
-						"time_since_failure", timeSinceFailure)
-				}
+			if cb.logger != nil {
+				cb.logger.Info("Circuit breaker moving to half-open after timeout")
 			}
-			cb.mu.Unlock()
 			return true
 		}
-
-		// Still in open state
-		cb.mu.RUnlock()
 
 		if cb.logger != nil {
 			cb.logger.Debug("Circuit breaker blocked",
@@ -184,9 +157,27 @@ func (cb *circuitBreaker) canAttempt() bool {
 		return false
 
 	default:
-		cb.mu.RUnlock()
 		return false
 	}
+}
+
+func (cb *circuitBreaker) getResetTimeout() time.Duration {
+	if cb.failures == 0 {
+		return 0
+	}
+
+	// Calculate exponential backoff
+	exp := math.Pow(exponentialBase, float64(cb.failures-1))
+	backoff := float64(cb.config.ResetTimeout) * exp
+
+	// Cap at max reset timeout
+	if backoff > float64(cb.config.MaxResetTimeout) {
+		backoff = float64(cb.config.MaxResetTimeout)
+	}
+
+	// Add jitter (0.8x to 1.2x of backoff)
+	jitter := 0.8 + 0.4*secureRandFloat64()
+	return time.Duration(backoff * jitter)
 }
 
 func (cb *circuitBreaker) resetCounters() {

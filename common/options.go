@@ -2,23 +2,70 @@ package common
 
 import "time"
 
-type engineConfig struct {
-	logger           Logger
-	circuitBreaker   *circuitBreakerConfig
-	retryConfig      *retryConfig
-	operationTimeout time.Duration
+const (
+	defaultOperationTimeout        = 5 * time.Second
+	defaultGracefulShutdownTimeout = 5 * time.Second
+	defaultPingInterval            = 10 * time.Second
+	defaultPingTimeout             = 5 * time.Second
+)
+
+type timeoutConfig struct {
+	OperationTimeout        time.Duration
+	GracefulShutdownTimeout time.Duration
+	PingInterval            time.Duration
+	PingTimeout             time.Duration
 }
 
-func defaultEngineConfig() *engineConfig {
-	return &engineConfig{
-		circuitBreaker:   defaultCircuitBreakerConfig(),
-		retryConfig:      defaultRetryConfig(),
-		logger:           &noopLogger{},
-		operationTimeout: operationTimeout,
+type TimeoutOption func(*timeoutConfig)
+
+func WithOperationTimeout(d time.Duration) TimeoutOption {
+	return func(c *timeoutConfig) { c.OperationTimeout = d }
+}
+
+func WithGracefulShutdownTimeout(d time.Duration) TimeoutOption {
+	return func(c *timeoutConfig) {
+		c.GracefulShutdownTimeout = d
 	}
 }
 
+func WithPingTimeout(d time.Duration) TimeoutOption {
+	return func(c *timeoutConfig) {
+		c.PingTimeout = d
+	}
+}
+
+func WithPingInterval(d time.Duration) TimeoutOption {
+	return func(c *timeoutConfig) {
+		c.PingInterval = d
+	}
+}
+
+func defaultTimeoutConfig() *timeoutConfig {
+	return &timeoutConfig{
+		OperationTimeout:        defaultOperationTimeout,
+		GracefulShutdownTimeout: defaultGracefulShutdownTimeout,
+		PingInterval:            defaultPingInterval,
+		PingTimeout:             defaultPingTimeout,
+	}
+}
+
+type engineConfig struct {
+	logger         Logger
+	circuitBreaker *circuitBreakerConfig
+	retryConfig    *retryConfig
+	timeoutConfig  *timeoutConfig
+}
+
 type Option func(*engineConfig)
+
+func defaultEngineConfig() *engineConfig {
+	return &engineConfig{
+		logger:         &noopLogger{},
+		circuitBreaker: defaultCircuitBreakerConfig(),
+		retryConfig:    defaultRetryConfig(),
+		timeoutConfig:  defaultTimeoutConfig(),
+	}
+}
 
 func WithLogger(logger Logger) Option {
 	return func(c *engineConfig) {
@@ -28,42 +75,43 @@ func WithLogger(logger Logger) Option {
 	}
 }
 
-// WithCircuitBreaker sets the circuit breaker configuration
-func WithCircuitBreaker(threshold int, resetTimeout time.Duration) Option {
+func WithCircuitBreaker(failureThreshold int, resetTimeout, maxResetTimeout time.Duration) Option {
 	return func(c *engineConfig) {
-		c.circuitBreaker = &circuitBreakerConfig{
-			FailureThreshold: threshold,
-			ResetTimeout:     resetTimeout,
+		if c.circuitBreaker == nil {
+			c.circuitBreaker = defaultCircuitBreakerConfig()
 		}
+		c.circuitBreaker.FailureThreshold = failureThreshold
+		c.circuitBreaker.ResetTimeout = resetTimeout
+		c.circuitBreaker.MaxResetTimeout = maxResetTimeout
 	}
 }
 
-// WithRetryConfig sets the retry configuration
 func WithRetryConfig(maxAttempts int, initialBackoff, maxBackoff time.Duration, jitter float64) Option {
 	return func(c *engineConfig) {
-		c.retryConfig = &retryConfig{
-			MaxAttempts:    maxAttempts,
-			InitialBackoff: initialBackoff,
-			MaxBackoff:     maxBackoff,
-			Jitter:         jitter,
+		if c.retryConfig == nil {
+			c.retryConfig = defaultRetryConfig()
 		}
+		c.retryConfig.MaxAttempts = maxAttempts
+		c.retryConfig.InitialBackoff = initialBackoff
+		c.retryConfig.MaxBackoff = maxBackoff
+		c.retryConfig.Jitter = jitter
 	}
 }
 
-func WithOperationTimeout(timeout time.Duration) Option {
-	return func(c *engineConfig) {
-		c.operationTimeout = timeout
-	}
-}
-
-// WithDefaultRetryConfig sets the default retry configuration
 func WithDefaultRetryConfig() Option {
 	return func(c *engineConfig) {
 		c.retryConfig = defaultRetryConfig()
 	}
 }
 
-// Client configuration options
+func WithTimeoutOptions(opts ...TimeoutOption) Option {
+	return func(c *engineConfig) {
+		for _, opt := range opts {
+			opt(c.timeoutConfig)
+		}
+	}
+}
+
 type ClientOption func(*ClientConfig)
 
 type ClientConfig struct {

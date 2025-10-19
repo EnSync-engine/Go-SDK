@@ -10,25 +10,19 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/gorilla/websocket"
-	"go.uber.org/zap"
 
 	"github.com/EnSync-engine/Go-SDK/common"
 )
 
 const (
-	pingInterval             = 30 * time.Second
-	handlerWorkerCount       = 10
-	keyValueParts            = 2
-	writeChanBufferSize      = 256
-	unsubscribeTimeout       = 500 * time.Millisecond
-	closeSleepDuration       = 100 * time.Millisecond
-	defaultConnectionTimeout = 1 * time.Second
-	jobBufferSize            = 100
+	keyValueParts       = 2
+	writeChanBufferSize = 256
 )
 
 type messageCallback struct {
@@ -41,8 +35,12 @@ type WebSocketEngine struct {
 	conn             *websocket.Conn
 	messageCallbacks sync.Map
 	writeChan        chan []byte
-	connMu           sync.Mutex
+	connMu           sync.RWMutex
 	requestMu        sync.Mutex
+	closed           atomic.Bool
+	closeMu          sync.Mutex
+	subscriptionMgr  *common.SubscriptionManager
+	subMgrMu         sync.Mutex
 }
 
 type wsSubscription struct {
@@ -50,9 +48,8 @@ type wsSubscription struct {
 	autoAck      bool
 	appSecretKey string
 	eventName    string
-	jobs         chan *common.EventPayload
-	workerWg     sync.WaitGroup
 	engine       *WebSocketEngine
+	closed       atomic.Bool
 }
 
 func NewWebSocketEngine(
@@ -79,7 +76,7 @@ func NewWebSocketEngine(
 		return nil, common.NewEnSyncError("invalid WebSocket URL", common.ErrTypeValidation, err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, defaultConnectionTimeout)
+	dialCtx, cancel := context.WithTimeout(ctx, baseEngine.GetOperationTimeout())
 	defer cancel()
 
 	dialer := &websocket.Dialer{
@@ -95,15 +92,20 @@ func NewWebSocketEngine(
 		}
 	}
 
-	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
+	conn, _, err := dialer.DialContext(dialCtx, wsURL, nil)
 	if err != nil {
 		return nil, common.NewEnSyncError("WebSocket connection failed", common.ErrTypeConnection, err)
 	}
 
 	e := &WebSocketEngine{
-		BaseEngine: baseEngine,
-		conn:       conn,
+		BaseEngine:      baseEngine,
+		conn:            conn,
+		writeChan:       make(chan []byte, writeChanBufferSize),
+		subscriptionMgr: nil,
 	}
+
+	go e.writePump()
+	go e.readPump()
 
 	return e, nil
 }
@@ -123,7 +125,7 @@ func (e *WebSocketEngine) CreateClient(accessKey string, options ...common.Clien
 	if err := e.authenticate(); err != nil {
 		return err
 	}
-	e.Logger.Info("Client created successfully", zap.String("clientId", e.ClientID))
+	e.Logger.Info("client created successfully", "clientId", e.ClientID)
 	return nil
 }
 
@@ -132,30 +134,9 @@ func (e *WebSocketEngine) authenticate() error {
 		Name: "authenticate",
 		Execute: func(ctx context.Context) error {
 			authMessage := fmt.Sprintf("CONN;ACCESS_KEY=:%s", e.AccessKey)
-
-			e.connMu.Lock()
-			err := e.conn.WriteMessage(websocket.TextMessage, []byte(authMessage))
-			e.connMu.Unlock()
+			response, err := e.sendRequest(authMessage)
 			if err != nil {
-				return common.NewEnSyncError("failed to send auth message", common.ErrTypeConnection, err)
-			}
-
-			e.connMu.Lock()
-			_, responseBytes, err := e.conn.ReadMessage()
-			e.connMu.Unlock()
-			if err != nil {
-				return common.NewEnSyncError("failed to read auth response", common.ErrTypeConnection, err)
-			}
-
-			response := string(responseBytes)
-
-			if strings.HasPrefix(response, "-FAIL:") {
-				errorMsg := strings.TrimPrefix(response, "-FAIL:")
-				return common.NewEnSyncError("authentication failed: "+errorMsg, common.ErrTypeAuth, nil)
-			}
-
-			if !strings.HasPrefix(response, "+PASS:") {
-				return common.NewEnSyncError("unexpected auth response: "+response, common.ErrTypeAuth, nil)
+				return common.NewEnSyncError("authentication failed", common.ErrTypeAuth, err)
 			}
 
 			content := strings.TrimPrefix(response, "+PASS:")
@@ -178,7 +159,7 @@ func (e *WebSocketEngine) authenticate() error {
 }
 
 func (e *WebSocketEngine) setAuthenticationResult(clientID, clientHash string) {
-	e.Logger.Info("Authentication successful")
+	e.Logger.Info("authentication successful", "clientId", clientID)
 
 	e.ClientID = clientID
 	e.ClientHash = clientHash
@@ -188,18 +169,23 @@ func (e *WebSocketEngine) setAuthenticationResult(clientID, clientHash string) {
 	e.State.IsConnected = true
 	e.State.Mu.Unlock()
 
-	e.writeChan = make(chan []byte, writeChanBufferSize)
-
-	go e.writePump()
-	go e.readPump()
 	go e.startPingInterval()
 }
 
 func (e *WebSocketEngine) writePump() {
-	ticker := time.NewTicker(pingInterval)
-	defer ticker.Stop()
-	defer e.conn.Close()
-	defer e.handleClose()
+	defer func() {
+		if r := recover(); r != nil {
+			e.Logger.Error("write pump panic", "panic", r)
+		}
+	}()
+	defer func() {
+		e.connMu.Lock()
+		if e.conn != nil {
+			e.conn.Close()
+		}
+		e.connMu.Unlock()
+		e.handleClose()
+	}()
 
 	for {
 		select {
@@ -207,28 +193,25 @@ func (e *WebSocketEngine) writePump() {
 			if !ok {
 				e.connMu.Lock()
 				if e.conn != nil {
-					err := e.conn.WriteMessage(websocket.CloseMessage, []byte{})
-					if err != nil {
-						e.Logger.Error("WebSocket close error", zap.Error(err))
-						e.connMu.Unlock()
-						return
-					}
+					e.conn.WriteMessage(websocket.CloseMessage, []byte{}) //nolint
 				}
 				e.connMu.Unlock()
 				return
 			}
+
 			e.connMu.Lock()
 			if e.conn != nil {
 				if err := e.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-					e.Logger.Error("WebSocket write error", zap.Error(err))
+					e.Logger.Error("websocket write error", "error", err)
 					e.connMu.Unlock()
 					return
 				}
-				e.connMu.Unlock()
 			} else {
 				e.connMu.Unlock()
 				return
 			}
+			e.connMu.Unlock()
+
 		case <-e.Ctx.Done():
 			return
 		}
@@ -236,8 +219,9 @@ func (e *WebSocketEngine) writePump() {
 }
 
 func (e *WebSocketEngine) startPingInterval() {
-	ticker := time.NewTicker(pingInterval)
+	ticker := time.NewTicker(e.GetPingIntervalTimeout())
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-e.Ctx.Done():
@@ -246,45 +230,67 @@ func (e *WebSocketEngine) startPingInterval() {
 			e.State.Mu.RLock()
 			isConnected := e.State.IsConnected
 			e.State.Mu.RUnlock()
+
 			if !isConnected {
 				continue
 			}
-			e.connMu.Lock()
-			if e.conn != nil {
-				deadline := time.Now().Add(defaultConnectionTimeout)
-				if err := e.conn.SetWriteDeadline(deadline); err != nil {
-					e.Logger.Error("Failed to set write deadline for ping", zap.Error(err))
-					e.connMu.Unlock()
+
+			e.connMu.RLock()
+			conn := e.conn
+			e.connMu.RUnlock()
+
+			if conn != nil {
+				deadline := time.Now().Add(e.GetPingIntervalTimeout())
+				if err := conn.SetWriteDeadline(deadline); err != nil {
+					e.Logger.Error("failed to set write deadline for ping", "error", err)
 					e.handleClose()
 					return
 				}
 
-				if err := e.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-					e.Logger.Error("Ping failed", zap.Error(err))
-					e.connMu.Unlock()
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					e.Logger.Error("ping failed", "error", err)
 					e.handleClose()
 					return
 				}
 			}
-			e.connMu.Unlock()
 		}
 	}
 }
 
 func (e *WebSocketEngine) readPump() {
+	defer func() {
+		if r := recover(); r != nil {
+			e.Logger.Error("read pump panic", "panic", r)
+		}
+	}()
 	defer e.handleClose()
-	e.conn.SetPongHandler(func(appData string) error {
-		return nil
-	})
+
+	e.connMu.RLock()
+	conn := e.conn
+	e.connMu.RUnlock()
+
+	if conn != nil {
+		conn.SetPongHandler(func(appData string) error {
+			return nil
+		})
+	}
 
 	for {
 		select {
 		case <-e.Ctx.Done():
 			return
 		default:
-			_, message, err := e.conn.ReadMessage()
+			e.connMu.RLock()
+			conn := e.conn
+			e.connMu.RUnlock()
+
+			if conn == nil {
+				return
+			}
+
+			_, message, err := conn.ReadMessage()
 			if err != nil {
-				e.Logger.Error("WebSocket read error", zap.Error(err))
+				e.Logger.Error("websocket read error", "error", err)
 				e.State.Mu.Lock()
 				e.State.IsConnected = false
 				e.State.Mu.Unlock()
@@ -294,9 +300,15 @@ func (e *WebSocketEngine) readPump() {
 			msg := string(message)
 
 			if msg == "PING" {
-				if err := e.conn.WriteMessage(websocket.TextMessage, []byte("PONG")); err != nil {
-					e.Logger.Error("Failed to send PONG", zap.Error(err))
-					return
+				e.connMu.RLock()
+				conn := e.conn
+				e.connMu.RUnlock()
+
+				if conn != nil {
+					if err := conn.WriteMessage(websocket.TextMessage, []byte("PONG")); err != nil {
+						e.Logger.Error("failed to send PONG", "error", err)
+						return
+					}
 				}
 				continue
 			}
@@ -318,7 +330,7 @@ func (e *WebSocketEngine) handleClose() {
 	e.State.IsConnected = false
 	e.State.IsAuthenticated = false
 	e.State.Mu.Unlock()
-	e.Logger.Info("WebSocket closed")
+	e.Logger.Info("websocket closed")
 }
 
 func (e *WebSocketEngine) Publish(
@@ -479,6 +491,12 @@ func (e *WebSocketEngine) Subscribe(eventName string, options *common.SubscribeO
 		return nil, err
 	}
 
+	e.subMgrMu.Lock()
+	if e.subscriptionMgr == nil {
+		e.subscriptionMgr = common.NewSubscriptionManager(e.Logger)
+	}
+	e.subMgrMu.Unlock()
+
 	if options == nil {
 		options = &common.SubscribeOptions{AutoAck: true}
 	}
@@ -494,31 +512,24 @@ func (e *WebSocketEngine) Subscribe(eventName string, options *common.SubscribeO
 	}
 
 	sub := &wsSubscription{
-		BaseSubscription: &common.BaseSubscription{Handlers: make([]common.EventHandler, 0)},
+		BaseSubscription: common.NewBaseSubscription(eventName, e.Logger),
 		eventName:        eventName,
 		autoAck:          options.AutoAck,
 		appSecretKey:     options.AppSecretKey,
-		jobs:             make(chan *common.EventPayload, jobBufferSize),
 		engine:           e,
 	}
 
-	sub.startWorkerPool()
-
-	e.SubscriptionMgr.Store(eventName, sub)
-	e.Logger.Info("Successfully subscribed", zap.String("eventName", eventName))
-	return sub, nil
-}
-
-func (s *wsSubscription) startWorkerPool() {
-	for i := 0; i < handlerWorkerCount; i++ {
-		s.workerWg.Add(1)
-		go func() {
-			defer s.workerWg.Done()
-			for event := range s.jobs {
-				s.CallHandlers(event, s.engine.Logger)
-			}
-		}()
+	if err := e.subscriptionMgr.Register(eventName, sub); err != nil {
+		return nil, err
 	}
+
+	if err := sub.StartWorkerPool(); err != nil {
+		e.subscriptionMgr.Unregister(eventName) //nolint:errcheck
+		return nil, err
+	}
+
+	e.Logger.Info("successfully subscribed", "eventName", eventName)
+	return sub, nil
 }
 
 func (e *WebSocketEngine) handleResponseMessage(msg string) {
@@ -544,91 +555,84 @@ func (e *WebSocketEngine) handleResponseMessage(msg string) {
 func (e *WebSocketEngine) sendRequest(message string) (string, error) {
 	e.requestMu.Lock()
 	defer e.requestMu.Unlock()
-	var response string
-	err := e.ExecuteOperation(common.Operation{
-		Name: "sendRequest",
-		Execute: func(ctx context.Context) error {
-			resp, err := e.sendMessageWithContext(ctx, message)
-			if err != nil {
-				return err
-			}
-			response = resp
-			return nil
-		},
-	})
+	ctx, cancel := context.WithTimeout(e.Ctx, e.GetOperationTimeout())
+	defer cancel()
 
-	return response, err
+	return e.sendMessageWithContext(ctx, message)
 }
 
 func (e *WebSocketEngine) handleEvent(msg string) {
 	event := parseEventMessage(msg)
 	if event == nil {
-		e.Logger.Error("Failed to parse event message", zap.String("message", msg))
+		e.Logger.Error("failed to parse event message", "message", msg)
 		return
 	}
 
-	if val, exists := e.SubscriptionMgr.Load(event.EventName); exists {
+	// Only handle if subscriptions exist
+	if e.subscriptionMgr == nil {
+		e.Logger.Error("no subscription found for event", "eventName", event.EventName)
+		return
+	}
+
+	if val, exists := e.subscriptionMgr.Get(event.EventName); exists {
 		sub := val.(*wsSubscription)
 		processedEvent, err := sub.decryptEvent(event)
 		if err != nil {
-			sub.engine.Logger.Error("Failed to decrypt event", zap.Error(err))
+			sub.engine.Logger.Error("failed to decrypt event", "error", err)
 			return
 		}
 
-		sub.jobs <- processedEvent
+		if err := sub.SubmitJob(processedEvent); err != nil {
+			sub.engine.Logger.Error("failed to submit job", "error", err)
+			return
+		}
 
 		if sub.autoAck && processedEvent.Idem != "" && processedEvent.Block != 0 {
 			if err := sub.Ack(processedEvent.Idem, processedEvent.Block); err != nil {
-				sub.engine.Logger.Error("Auto-ack error", zap.Error(err))
+				sub.engine.Logger.Error("auto-ack error", "eventId", processedEvent.Idem, "error", err)
 			}
 		}
 	} else {
-		e.Logger.Error("No subscription found for event",
-			zap.String("eventName", event.EventName))
+		e.Logger.Error("no subscription found for event", "eventName", event.EventName)
 	}
 }
 
 func (e *WebSocketEngine) Close() error {
-	e.connMu.Lock()
-	defer e.connMu.Unlock()
+	e.closeMu.Lock()
+	defer e.closeMu.Unlock()
 
-	if e.conn != nil {
-		e.State.Mu.Lock()
-		isConnected := e.State.IsConnected
-		e.State.IsConnected = false
-		e.State.IsAuthenticated = false
-		e.State.Mu.Unlock()
-
-		if isConnected {
-			e.SubscriptionMgr.Range(func(key, value interface{}) bool {
-				if sub, ok := value.(*wsSubscription); ok {
-					ctx, cancel := context.WithTimeout(e.Ctx, unsubscribeTimeout)
-					defer cancel()
-
-					go func() {
-						if err := sub.unsubscribeWithContext(ctx); err != nil {
-							e.Logger.Error("Failed to unsubscribe during close",
-								zap.String("event", sub.eventName),
-								zap.Error(err))
-						}
-					}()
-				}
-				return true
-			})
-
-			time.Sleep(closeSleepDuration)
-		}
-
-		if e.writeChan != nil {
-			close(e.writeChan)
-		}
-
-		err := e.conn.Close()
-		e.conn = nil
-		return err
+	if !e.closed.CompareAndSwap(false, true) {
+		return nil
 	}
 
-	e.Logger.Info("WebSocket already closed")
+	e.Logger.Info("closing websocket engine")
+
+	e.State.Mu.Lock()
+	e.State.IsConnected = false
+	e.State.IsAuthenticated = false
+	e.State.Mu.Unlock()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), e.GetGracefulShutdownTimeout())
+	defer cancel()
+
+	e.subMgrMu.Lock()
+	if e.subscriptionMgr != nil {
+		if err := e.subscriptionMgr.CloseAll(shutdownCtx); err != nil {
+			e.Logger.Warn("error closing subscriptions", "error", err)
+		}
+	}
+	e.subMgrMu.Unlock()
+
+	e.connMu.Lock()
+	if e.writeChan != nil {
+		close(e.writeChan)
+	}
+	if e.conn != nil {
+		e.conn.Close()
+	}
+	e.connMu.Unlock()
+
+	e.Logger.Info("websocket engine shutdown complete")
 	return nil
 }
 
@@ -803,9 +807,7 @@ func (s *wsSubscription) Rollback(eventIdem string, block int64) error {
 }
 
 func (s *wsSubscription) Unsubscribe() error {
-	ctx, cancel := context.WithTimeout(s.engine.Ctx, unsubscribeTimeout)
-	defer cancel()
-	return s.unsubscribeWithContext(ctx)
+	return s.unsubscribe()
 }
 
 func (s *wsSubscription) decryptEvent(event *common.EventPayload) (*common.EventPayload, error) {
@@ -839,20 +841,24 @@ func (s *wsSubscription) decryptEvent(event *common.EventPayload) (*common.Event
 	return decryptedEvent, nil
 }
 
-func (s *wsSubscription) unsubscribeWithContext(context.Context) error {
+func (s *wsSubscription) unsubscribe() error {
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+
 	message := fmt.Sprintf("UNSUB;CLIENT_ID=:%s;EVENT_NAME=:%s", s.engine.ClientID, s.eventName)
 	_, err := s.engine.sendRequest(message)
 	if err != nil {
 		return common.NewEnSyncError("unsubscribe failed", common.ErrTypeSubscription, err)
 	}
-	s.engine.SubscriptionMgr.Delete(s.eventName)
+	s.engine.subscriptionMgr.Unregister(s.eventName) //nolint:errcheck
+	s.StopWorkerPool()
 	s.Mu.Lock()
 	s.Handlers = nil
-	if s.jobs != nil {
-		close(s.jobs)
-	}
 	s.Mu.Unlock()
-	s.workerWg.Wait()
+
+	s.engine.Logger.Info("successfully unsubscribed", "eventName", s.eventName)
+
 	return nil
 }
 
@@ -875,7 +881,7 @@ func (e *WebSocketEngine) sendMessageWithContext(ctx context.Context, message st
 
 	defer func() {
 		if r := recover(); r != nil {
-			e.Logger.Error("Recovered from panic in sendMessageWithContext", zap.Any("panic", r))
+			e.Logger.Error("recovered from panic in sendMessageWithContext", "panic", r)
 		}
 	}()
 

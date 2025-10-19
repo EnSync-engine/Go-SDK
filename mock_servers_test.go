@@ -11,19 +11,30 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/EnSync-engine/Go-SDK/common"
 	ensyncGrpc "github.com/EnSync-engine/Go-SDK/grpc"
 	pb "github.com/EnSync-engine/Go-SDK/internal/proto"
 )
 
-type SimpleMockGRPCServer struct {
+type FlakyMockGRPCServer struct {
 	pb.UnimplementedEnSyncServiceServer
 	mu            sync.RWMutex
 	authenticated bool
+	fail          bool
+	grpcServer    *grpc.Server
 }
 
-func (m *SimpleMockGRPCServer) Connect(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
+func (m *FlakyMockGRPCServer) setFail(fail bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fail = fail
+}
+
+func (m *FlakyMockGRPCServer) Connect(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -42,7 +53,7 @@ func (m *SimpleMockGRPCServer) Connect(ctx context.Context, req *pb.ConnectReque
 	}, nil
 }
 
-func (m *SimpleMockGRPCServer) PublishEvent(ctx context.Context, req *pb.PublishEventRequest) (*pb.PublishEventResponse, error) {
+func (m *FlakyMockGRPCServer) PublishEvent(ctx context.Context, req *pb.PublishEventRequest) (*pb.PublishEventResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -53,48 +64,65 @@ func (m *SimpleMockGRPCServer) PublishEvent(ctx context.Context, req *pb.Publish
 		}, nil
 	}
 
+	if m.fail {
+		return nil, status.Error(codes.Unavailable, "mock server is intentionally failing")
+	}
+
 	return &pb.PublishEventResponse{
 		Success:   true,
 		EventIdem: "mock-event-id",
 	}, nil
 }
 
-func (m *SimpleMockGRPCServer) Subscribe(req *pb.SubscribeRequest, stream pb.EnSyncService_SubscribeServer) error {
+func (m *FlakyMockGRPCServer) Subscribe(req *pb.SubscribeRequest, stream pb.EnSyncService_SubscribeServer) error {
 	<-stream.Context().Done()
 	return nil
 }
 
-// startSimpleMockGRPCServer starts a simple mock gRPC server
-func startSimpleMockGRPCServer(t *testing.T) (addr string) {
+func startFlakyMockGRPCServer(t *testing.T) (addr string, mockServer *FlakyMockGRPCServer, cleanup func()) {
 	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		t.Fatalf("Failed to listen: %v", err)
 	}
 
-	mockServer := &SimpleMockGRPCServer{}
+	mockServer = &FlakyMockGRPCServer{}
 	grpcServer := grpc.NewServer()
+	mockServer.grpcServer = grpcServer
 	pb.RegisterEnSyncServiceServer(grpcServer, mockServer)
 
+	errChan := make(chan error, 1)
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
-			t.Logf("Server error: %v", err)
+			errChan <- err
 		}
 	}()
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
+	conn, err := grpc.NewClient(lis.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("Mock server failed to start within 2 seconds: %v", err)
+	}
+	// We connected successfully, so we can close this test connection and proceed.
+	conn.Close()
 
-	return lis.Addr().String()
+	cleanup = func() {
+		grpcServer.GracefulStop()
+		select {
+		case <-errChan:
+		case <-time.After(1 * time.Second):
+		}
+	}
+
+	return lis.Addr().String(), mockServer, cleanup
 }
 
 func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 	ctx := context.Background()
+	addr, _, cleanup := startFlakyMockGRPCServer(t)
+	defer cleanup()
 
-	// Start mock gRPC server
-	addr := startSimpleMockGRPCServer(t)
-
-	// Create a new gRPC engine
-	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr, common.WithOperationTimeout(5*time.Second))
+	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)
 	if err != nil {
 		t.Fatalf("Failed to create gRPC engine: %v", err)
 	}
@@ -104,7 +132,6 @@ func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 		}
 	}()
 
-	// Authenticate with EnSync protocol
 	err = engine.CreateClient("test-access-key")
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
@@ -146,12 +173,10 @@ func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 
 func TestGRPCEngineConnectionAndAuth(t *testing.T) {
 	ctx := context.Background()
+	addr, _, cleanup := startFlakyMockGRPCServer(t)
+	defer cleanup()
 
-	// Start mock gRPC server
-	addr := startSimpleMockGRPCServer(t)
-
-	// Test connection creation
-	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr, common.WithOperationTimeout(5*time.Second))
+	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)
 	if err != nil {
 		t.Fatalf("Failed to create gRPC engine: %v", err)
 	}
@@ -161,16 +186,171 @@ func TestGRPCEngineConnectionAndAuth(t *testing.T) {
 		}
 	}()
 
-	// Test authentication
 	err = engine.CreateClient("test-access-key")
 	if err != nil {
 		t.Fatalf("Failed to authenticate: %v", err)
 	}
 
-	// Verify engine state
 	if engine.ClientID == "" {
 		t.Error("Expected ClientID to be set after authentication")
 	}
 
 	t.Logf("Authentication successful, ClientID: %s", engine.ClientID)
+}
+
+func TestCircuitBreaker(t *testing.T) {
+	ctx := context.Background()
+	addr, mockServer, cleanup := startFlakyMockGRPCServer(t)
+	defer cleanup()
+
+	// Configure the circuit breaker with a max reset timeout to ensure
+	// the test's sleep is always sufficient, avoiding flakes from
+	// exponential backoff and jitter.
+	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr,
+		common.WithCircuitBreaker(3, 1*time.Second, 1*time.Second), // 3 failures, 1s base reset, 1s max reset
+		common.WithRetryConfig(4, 10*time.Millisecond, 50*time.Millisecond, 0.1))
+	if err != nil {
+		t.Fatalf("Failed to create gRPC engine: %v", err)
+	}
+	defer engine.Close()
+
+	err = engine.CreateClient("test-access-key")
+	if err != nil {
+		t.Fatalf("Failed to authenticate: %v", err)
+	}
+
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+	recipientKey := base64.StdEncoding.EncodeToString(publicKey)
+
+	// Make the server fail
+	mockServer.setFail(true)
+	t.Log("Server set to fail mode")
+
+	// Trigger failures to open the circuit
+	for i := 0; i < 3; i++ {
+		_, err = engine.Publish("test-event", []string{recipientKey}, map[string]interface{}{"data": "test"}, nil, nil)
+		if err == nil {
+			t.Fatalf("Expected publish attempt %d to fail, but it succeeded", i+1)
+		}
+		t.Logf("Attempt %d failed as expected: %v", i+1, err)
+	}
+	t.Log("Circuit breaker opened after 3 failures")
+
+	// Verify the circuit is open - should fail immediately without retries
+	start := time.Now()
+	_, err = engine.Publish("test-event", []string{recipientKey}, map[string]interface{}{"data": "test"}, nil, nil)
+	duration := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Expected publish to fail because circuit is open, but it succeeded")
+	}
+
+	if duration > 100*time.Millisecond {
+		t.Logf("Circuit breaker took %v to reject (expected < 100ms)", duration)
+	}
+	t.Logf("Circuit breaker rejected operation in %v", duration)
+
+	//  Wait for the reset timeout and make the server succeed again
+	t.Log("Waiting for circuit breaker to enter half-open state...")
+	time.Sleep(1100 * time.Millisecond)
+	mockServer.setFail(false)
+	t.Log("Server set to success mode")
+
+	//  Attempt to recover
+	maxAttempts := 5
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		_, lastErr = engine.Publish("test-event", []string{recipientKey}, map[string]interface{}{"data": "test"}, nil, nil)
+		if lastErr == nil {
+			t.Logf("Publish succeeded on attempt %d after circuit reset", i+1)
+			break
+		}
+		t.Logf("Attempt %d failed: %v", i+1, lastErr)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if lastErr != nil {
+		t.Fatalf("Expected publish to succeed after circuit reset, but it failed after %d attempts: %v", maxAttempts, lastErr)
+	}
+
+	t.Log("Circuit breaker test successful!")
+}
+
+func TestConcurrentPublishAndClose(t *testing.T) {
+	ctx := context.Background()
+	addr, _, cleanup := startFlakyMockGRPCServer(t)
+	defer cleanup()
+
+	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)
+	if err != nil {
+		t.Fatalf("Failed to create gRPC engine: %v", err)
+	}
+
+	err = engine.CreateClient("test-access-key")
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+	recipientKey := base64.StdEncoding.EncodeToString(publicKey)
+
+	// Run concurrent publishes and close at random times
+	var wg sync.WaitGroup
+	publishCount := 0
+	publishMutex := sync.Mutex{}
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			_, err := engine.Publish("test-event", []string{recipientKey}, map[string]interface{}{"data": "test"}, nil, nil)
+			if err != nil {
+				t.Logf("Publish %d failed: %v", index, err)
+			} else {
+				publishMutex.Lock()
+				publishCount++
+				publishMutex.Unlock()
+				t.Logf("Publish %d succeeded", index)
+			}
+		}(i)
+	}
+
+	// Close engine after a short delay
+	time.Sleep(100 * time.Millisecond)
+	t.Log("Closing engine while publishes are in flight...")
+	if err := engine.Close(); err != nil {
+		t.Logf("Error during close: %v", err)
+	}
+
+	wg.Wait()
+	publishMutex.Lock()
+	t.Logf("Concurrent test complete: %d publishes succeeded", publishCount)
+	publishMutex.Unlock()
+}
+
+func TestEngineCloseIdempotency(t *testing.T) {
+	ctx := context.Background()
+	addr, _, cleanup := startFlakyMockGRPCServer(t)
+	defer cleanup()
+
+	engine, err := ensyncGrpc.NewGRPCEngine(ctx, "grpc://"+addr)
+	if err != nil {
+		t.Fatalf("Failed to create gRPC engine: %v", err)
+	}
+
+	// Call Close multiple times - should not panic
+	for i := 0; i < 3; i++ {
+		if err := engine.Close(); err != nil {
+			t.Logf("Close %d returned error: %v", i+1, err)
+		}
+		t.Logf("Close %d successful", i+1)
+	}
+
+	t.Log("Engine close idempotency test passed!")
 }

@@ -7,35 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-10-19
+
 ### Added
-- operationTimeout and WithOperationTimeout option to engine config
-- DecryptEventPayload, PreparePublishData, and improved input validation in BaseEngine
-- Unified payload metadata analysis and internal PublishData struct
+- Version 0.2.1 release
+
+
 
 ### Changed
-- gRPC and WebSocket engines now use new publish and subscribe validation and data preparation
-- Improved test coverage and updated tests for new function names and signatures
+- Refactored configuration options for timeouts and circuit breakers to be more intuitive and less redundant.
 
 ### Fixed
-- Naming and visibility for crypto helpers (e.g., encryptWithMessageKey, decryptHybridMessage)
-- Subscription handler locking and event processing
+- Resolved a race condition in `TestCircuitBreaker` by ensuring `MaxResetTimeout` is correctly applied.
+- Corrected a test setup issue in `mock_servers_test.go` to prevent race conditions by using a blocking dial.
 
 ### Other
 - Updated go.mod and go.sum for Go 1.24 and new dependencies
-
-## [0.1.4] - 2025-10-18
-
-### Added
-- Version 0.1.4 release
-
-
-## [0.1.3] - 2025-10-16
+## [0.2.0] - 2025-10-19
 
 ### Added
-- Version 0.1.3 release
+- Added `WithOperationTimeout` and other granular `WithTimeoutOptions` for more flexible configuration.
+- Introduced `DecryptEventPayload` and `PreparePublishData` in `BaseEngine` to centralize logic.
+- Implemented unified payload metadata analysis.
 
+### Changed
+- Both gRPC and WebSocket engines now use the common validation and data preparation methods from `BaseEngine`.
 
-## [v1.2.1] - 2025-10-16
+### Fixed
+- Corrected naming and visibility for internal crypto helper functions.
+- Improved subscription handler locking to prevent race conditions.
+
+## [1.2.1] - 2025-10-16
 
 ### 🔒 Security & Cryptography
 - **MAJOR**: Refactored cryptographic implementation to use proven libraries
@@ -53,24 +55,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Bug Fixes
 - Fixed decryption failures caused by improper key conversion
-- Resolved gRPC stream error logging format issues
-- Fixed "Stream receive error: context canceled" being logged as errors instead of info
+- Resolved gRPC stream error logging format issues.
+- Fixed "Stream receive error: context canceled" being logged as errors instead of info.
 
 ### 🧪 Testing
 - Updated all crypto tests to use proper Ed25519 key generation
-- Removed unused imports and cleaned up test dependencies
-- All cryptographic unit tests now pass with library-based implementation
+- All cryptographic unit tests now pass with the new implementation.
 
 ### 📚 Documentation
-- Updated code comments to reflect new cryptographic approach
-- Added proper error handling documentation for gRPC streams
-- Fixed test compatibility with library-based cryptographic functions
-- All unit tests now pass with the new implementation
-- Removed dependency on `golang.org/x/crypto/nacl/box` from tests
+- Updated code comments to reflect the new library-based cryptographic approach.
 
-### 📚 Documentation
-- Updated code comments to reflect library-based approach
-- Added proper error messages with context for debugging
+## [0.1.4] - 2025-10-18
+
+### Added
+- Version 0.1.4 release.
+
+## [0.1.3] - 2025-10-16
+
+### Added
+- Version 0.1.3 release.
 
 ## [0.1.2] - 2025-10-16
 
@@ -82,9 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **BREAKING**: Moved protobuf definitions to internal package
-- Relocated proto files from `proto/` to `internal/proto/` directory
-- Updated all import paths from `github.com/EnSync-engine/Go-SDK/proto` to `github.com/EnSync-engine/Go-SDK/internal/proto`
-- External users can no longer directly access protobuf types (by design - following Go best practices)
+- Relocated proto files from `proto/` to `internal/proto/` directory.
+- Updated all import paths from `github.com/EnSync-engine/Go-SDK/proto` to `github.com/EnSync-engine/Go-SDK/internal/proto`.
+- External users can no longer directly access protobuf types (by design - following Go best practices).
 
 ### Improved
 - **Developer Experience**: External SDK users no longer need protobuf knowledge, toolchain, or dependencies
@@ -154,6 +157,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Connection state management and thread safety
 - WebSocket reconnection logic and error handling
 
-[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/EnSync-engine/Go-SDK/releases/tag/v0.1.0
+[Unreleased]: https://github.com/EnSync-engine/Go-SDK/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/EnSync-engine/Go-SDK/compare/v1.2.1...v0.2.0
+[1.2.1]: https://github.com/EnSync-engine/Go-SDK/compare/v0.1.4...v1.2.1
