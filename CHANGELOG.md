@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-10-19
+
+### Added
+- Version 0.2.1 release
+
+
 
 ### Changed
 - Refactored configuration options for timeouts and circuit breakers to be more intuitive and less redundant.
