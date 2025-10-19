@@ -166,18 +166,6 @@ func main() {
 }
 ```
 
-## 🔐 Working with Encryption
-
-EnSync uses end-to-end encryption. Here's how to get recipient public keys:
-
-```go
-// Get your client's public key
-publicKey := engine.GetClientPublicKey()
-log.Printf("My public key: %s", publicKey)
-
-// Share this key with others who want to send you events
-// Use their public keys when publishing events to them
-```
 
 ## 🌐 Choosing a Transport
 
@@ -272,7 +260,7 @@ eventID, _ := engine.Publish(
     recipients,
     map[string]interface{}{"message": "Hello everyone!"},
     nil,
-    &common.PublishOptions{UseHybridEncryption: true}, // Efficient for multiple recipients
+    &common.PublishOptions{UseHybridEncryption: true},
 )
 ```
 
@@ -369,8 +357,7 @@ ctx := context.Background()
 engine, _ := ensync.NewGRPCEngine(
     ctx,
     "grpc://localhost:50051",
-    common.WithMaxReconnectAttempts(10),
-    common.WithReconnectDelay(3 * time.Second),
+    common.WithRetryConfig(5, 2*time.Second, 30*time.Second, 0.2),
 )
 ```
 
@@ -389,11 +376,6 @@ ctx := context.Background()
 engine, _ := ensync.NewGRPCEngine(
     ctx,
     "grpc://localhost:50051",
-    // Reconnection settings
-    common.WithMaxReconnectAttempts(10),
-    common.WithReconnectDelay(2 * time.Second),
-    common.WithAutoReconnect(true),
-    
     // Circuit breaker - pause after 5 failures for 30 seconds
     common.WithCircuitBreaker(5, 30 * time.Second),
     
@@ -428,9 +410,7 @@ engine, _ := ensync.NewWebSocketEngine(
     ctx,
     "ws://localhost:8082",
     // Same common options as gRPC
-    common.WithMaxReconnectAttempts(5),
-    common.WithReconnectDelay(2 * time.Second),
-    common.WithCircuitBreaker(3, 20 * time.Second),
+   
 )
 ```
 
@@ -464,7 +444,7 @@ if err != nil {
 ```go
 eventID, err := engine.Publish(
     "test/event",
-    []string{engine.GetClientPublicKey()}, // Send to yourself
+    []string{"recipient-public-key-base64"},
     map[string]interface{}{"test": "data"},
     nil, nil,
 )

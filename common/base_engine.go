@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
-)
 
-const (
-	operationTimeout = 1 * time.Second
+	"go.uber.org/zap"
 )
 
 type engineState struct {
@@ -24,7 +22,7 @@ type BaseEngineBuilder struct {
 
 func NewBaseEngineBuilder() *BaseEngineBuilder {
 	return &BaseEngineBuilder{
-		config: &engineConfig{},
+		config: defaultEngineConfig(),
 	}
 }
 
@@ -36,25 +34,12 @@ func (b *BaseEngineBuilder) WithConfigOptions(opts ...Option) *BaseEngineBuilder
 }
 
 func (b *BaseEngineBuilder) Build(ctx context.Context) (*BaseEngine, error) {
-	if b.config == nil {
-		b.config = defaultEngineConfig()
-	}
-
-	if b.config.logger == nil {
-		b.config.logger = &noopLogger{}
-	}
-
-	if b.config.retryConfig == nil {
-		b.config.retryConfig = defaultRetryConfig()
-	}
-
 	engine := &BaseEngine{
-		config:          b.config,
-		State:           engineState{},
-		Ctx:             ctx,
-		Logger:          b.config.logger,
-		SubscriptionMgr: newSubscriptionManager(),
-		retryConfig:     b.config.retryConfig,
+		config:      b.config,
+		State:       engineState{},
+		Ctx:         ctx,
+		Logger:      b.config.logger,
+		retryConfig: b.config.retryConfig,
 	}
 
 	if b.config.circuitBreaker != nil {
@@ -70,17 +55,17 @@ type Operation struct {
 }
 
 type BaseEngine struct {
-	AccessKey       string
-	AppSecretKey    string
-	State           engineState
-	ClientID        string
-	Logger          Logger
-	ClientHash      string
-	Ctx             context.Context
-	config          *engineConfig
-	circuitBreaker  *circuitBreaker
-	retryConfig     *retryConfig
-	SubscriptionMgr *SubscriptionManager
+	AccessKey      string
+	AppSecretKey   string
+	State          engineState
+	ClientID       string
+	Logger         Logger
+	ClientHash     string
+	Ctx            context.Context
+	config         *engineConfig
+	circuitBreaker *circuitBreaker
+	retryConfig    *retryConfig
+	cbStateMu      sync.RWMutex
 }
 
 func NewBaseEngine(ctx context.Context, opts ...Option) (*BaseEngine, error) {
@@ -100,15 +85,22 @@ func (b *BaseEngine) recordFailure() {
 		return
 	}
 
+	b.cbStateMu.RLock()
 	oldState := b.circuitBreaker.state
+	b.cbStateMu.RUnlock()
+
 	b.circuitBreaker.RecordFailure()
+
+	b.cbStateMu.RLock()
 	newState := b.circuitBreaker.state
+	failures := b.circuitBreaker.failures
+	b.cbStateMu.RUnlock()
 
 	if oldState != newState && b.Logger != nil {
-		b.Logger.Info("Circuit breaker state changed",
-			"oldState", oldState,
-			"newState", newState,
-			"failures", b.circuitBreaker.failures)
+		b.Logger.Info("circuit breaker state changed",
+			zap.String("oldState", string(oldState)),
+			zap.String("newState", string(newState)),
+			zap.Int("failures", failures))
 	}
 }
 
@@ -117,14 +109,20 @@ func (b *BaseEngine) recordSuccess() {
 		return
 	}
 
+	b.cbStateMu.RLock()
 	oldState := b.circuitBreaker.state
+	b.cbStateMu.RUnlock()
+
 	b.circuitBreaker.RecordSuccess()
+
+	b.cbStateMu.RLock()
 	newState := b.circuitBreaker.state
+	b.cbStateMu.RUnlock()
 
 	if oldState != newState && b.Logger != nil {
-		b.Logger.Info("Circuit breaker state changed",
-			"oldState", oldState,
-			"newState", newState)
+		b.Logger.Info("circuit breaker state changed",
+			zap.String("oldState", string(oldState)),
+			zap.String("newState", string(newState)))
 	}
 }
 
@@ -132,7 +130,25 @@ func (b *BaseEngine) canAttemptConnection() bool {
 	if b.circuitBreaker == nil {
 		return true
 	}
-	return b.circuitBreaker.canAttempt()
+	if !b.circuitBreaker.canAttempt() {
+		if b.Logger != nil {
+			b.Logger.Warn("circuit breaker is open, rejecting operation")
+		}
+		return false
+	}
+	return true
+}
+
+func (b *BaseEngine) GetOperationTimeout() time.Duration {
+	return b.config.timeoutConfig.OperationTimeout
+}
+
+func (b *BaseEngine) GetGracefulShutdownTimeout() time.Duration {
+	return b.config.timeoutConfig.GracefulShutdownTimeout
+}
+
+func (b *BaseEngine) GetPingIntervalTimeout() time.Duration {
+	return b.config.timeoutConfig.PingInterval
 }
 
 func (e *BaseEngine) DecryptEventPayload(
@@ -251,35 +267,33 @@ func (e *BaseEngine) ValidateSubscribeInput(eventName string) error {
 		return ErrNotAuthenticated
 	}
 
-	if e.SubscriptionMgr.Exists(eventName) {
-		return NewEnSyncError("already subscribed to event "+eventName, ErrTypeSubscription, nil)
-	}
-
 	return nil
 }
 
 func (e *BaseEngine) ExecuteOperation(op Operation) error {
 	return e.WithRetry(e.Ctx, func() error {
-		timeout := e.config.operationTimeout
-		ctx, cancel := context.WithTimeout(e.Ctx, timeout)
+		ctx, cancel := context.WithTimeout(e.Ctx, e.GetOperationTimeout())
 		defer cancel()
+
 		err := op.Execute(ctx)
 		if err != nil {
+			e.recordFailure()
 			if e.Logger != nil {
 				if ctx.Err() != nil {
-					e.Logger.Warn("Operation failed due to context cancellation",
-						"operation", op.Name,
-						"ctxErr", ctx.Err().Error(),
-						"error", err,
-					)
+					e.Logger.Warn("operation failed due to context cancellation",
+						zap.String("operation", op.Name),
+						zap.Error(ctx.Err()),
+						zap.NamedError("original_error", err))
 				} else {
-					e.Logger.Warn("Operation failed",
-						"operation", op.Name,
-						"error", err,
-					)
+					e.Logger.Warn("operation failed",
+						zap.String("operation", op.Name),
+						zap.Error(err))
 				}
 			}
+			return err
 		}
-		return err
+
+		e.recordSuccess()
+		return nil
 	})
 }
