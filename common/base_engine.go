@@ -122,3 +122,44 @@ func (b *BaseEngine) canAttemptConnection() bool {
 	}
 	return b.circuitBreaker.canAttempt()
 }
+
+// IsConnected returns whether the engine is currently connected
+func (e *BaseEngine) IsConnected() bool {
+	e.State.Mu.RLock()
+	defer e.State.Mu.RUnlock()
+	return e.State.IsConnected && e.State.IsAuthenticated
+}
+
+// GetClientID returns the client's ID
+func (e *BaseEngine) GetClientID() string {
+	return e.ClientID
+}
+
+// SetAuthenticated sets the engine as authenticated and connected
+func (e *BaseEngine) SetAuthenticated(clientID, clientHash string) {
+	e.ClientID = clientID
+	e.ClientHash = clientHash
+
+	e.State.Mu.Lock()
+	e.State.IsAuthenticated = true
+	e.State.IsConnected = true
+	e.State.Mu.Unlock()
+}
+
+// SetConnectionState updates the connection state
+func (e *BaseEngine) SetConnectionState(connected bool) {
+	e.State.Mu.Lock()
+	e.State.IsConnected = connected
+	if !connected {
+		e.State.IsAuthenticated = false // Ensure auth is cleared on disconnect
+	}
+	e.State.Mu.Unlock()
+}
+
+// ResetState resets the engine state (e.g. on close)
+func (e *BaseEngine) ResetState() {
+	e.State.Mu.Lock()
+	e.State.IsAuthenticated = false
+	e.State.IsConnected = false
+	e.State.Mu.Unlock()
+}

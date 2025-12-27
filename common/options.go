@@ -2,10 +2,29 @@ package common
 
 import "time"
 
+// TimeoutConfig holds timeout-related settings for the engine
+type TimeoutConfig struct {
+	OperationTimeout        time.Duration
+	GracefulShutdownTimeout time.Duration
+	PingInterval            time.Duration
+	ConnectionTimeout       time.Duration
+}
+
+// DefaultTimeoutConfig returns sensible default timeout values
+func DefaultTimeoutConfig() *TimeoutConfig {
+	return &TimeoutConfig{
+		OperationTimeout:        5 * time.Second,
+		GracefulShutdownTimeout: 10 * time.Second,
+		PingInterval:            30 * time.Second,
+		ConnectionTimeout:       10 * time.Second,
+	}
+}
+
 type engineConfig struct {
 	logger         Logger
 	circuitBreaker *circuitBreakerConfig
 	retryConfig    *retryConfig
+	timeoutConfig  *TimeoutConfig
 }
 
 func defaultEngineConfig() *engineConfig {
@@ -13,6 +32,7 @@ func defaultEngineConfig() *engineConfig {
 		circuitBreaker: defaultCircuitBreakerConfig(),
 		retryConfig:    defaultRetryConfig(),
 		logger:         &noopLogger{},
+		timeoutConfig:  DefaultTimeoutConfig(),
 	}
 }
 
@@ -52,6 +72,63 @@ func WithRetryConfig(maxAttempts int, initialBackoff, maxBackoff time.Duration, 
 func WithDefaultRetryConfig() Option {
 	return func(c *engineConfig) {
 		c.retryConfig = defaultRetryConfig()
+	}
+}
+
+// WithTimeoutOptions combines multiple timeout-related options into one.
+// Usage: common.WithTimeoutOptions(
+//
+//	common.WithOperationTimeout(5*time.Second),
+//	common.WithGracefulShutdownTimeout(10*time.Second),
+//	common.WithPingInterval(30*time.Second),
+//
+// )
+func WithTimeoutOptions(opts ...Option) Option {
+	return func(c *engineConfig) {
+		// Apply all provided options to configure timeouts
+		for _, opt := range opts {
+			opt(c)
+		}
+	}
+}
+
+// WithOperationTimeout sets the timeout for individual operations
+func WithOperationTimeout(timeout time.Duration) Option {
+	return func(c *engineConfig) {
+		if c.timeoutConfig == nil {
+			c.timeoutConfig = DefaultTimeoutConfig()
+		}
+		c.timeoutConfig.OperationTimeout = timeout
+	}
+}
+
+// WithGracefulShutdownTimeout sets the timeout for graceful shutdown
+func WithGracefulShutdownTimeout(timeout time.Duration) Option {
+	return func(c *engineConfig) {
+		if c.timeoutConfig == nil {
+			c.timeoutConfig = DefaultTimeoutConfig()
+		}
+		c.timeoutConfig.GracefulShutdownTimeout = timeout
+	}
+}
+
+// WithPingInterval sets the interval between heartbeat pings
+func WithPingInterval(interval time.Duration) Option {
+	return func(c *engineConfig) {
+		if c.timeoutConfig == nil {
+			c.timeoutConfig = DefaultTimeoutConfig()
+		}
+		c.timeoutConfig.PingInterval = interval
+	}
+}
+
+// WithConnectionTimeout sets the timeout for connection operations
+func WithConnectionTimeout(timeout time.Duration) Option {
+	return func(c *engineConfig) {
+		if c.timeoutConfig == nil {
+			c.timeoutConfig = DefaultTimeoutConfig()
+		}
+		c.timeoutConfig.ConnectionTimeout = timeout
 	}
 }
 

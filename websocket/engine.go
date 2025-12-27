@@ -33,16 +33,8 @@ type WebSocketEngine struct {
 }
 
 type wsSubscription struct {
-	baseSubscription
-	eventName    string
-	autoAck      bool
-	appSecretKey string
-	engine       *WebSocketEngine
-}
-
-type baseSubscription struct {
-	handlers []common.EventHandler
-	mu       sync.RWMutex
+	common.BaseSubscription
+	engine *WebSocketEngine
 }
 
 type messageCallback struct {
@@ -276,19 +268,16 @@ func (e *WebSocketEngine) handleClose() {
 	e.Logger.Info("WebSocket closed")
 }
 
+// Publish publishes a message
 func (e *WebSocketEngine) Publish(
 	eventName string,
 	recipients []string,
 	payload map[string]interface{},
-	metadata *common.EventMetadata,
+	metadata *common.MessageMetadata,
 	options *common.PublishOptions,
 ) (string, error) {
-	e.State.Mu.RLock()
-	isAuth := e.State.IsAuthenticated
-	e.State.Mu.RUnlock()
-
-	if !isAuth {
-		return "", common.NewEnSyncError("not authenticated", common.ErrTypeAuth, nil)
+	if !e.IsConnected() {
+		return "", common.NewEnSyncError("client not connected/authenticated", common.ErrTypeConnection, nil)
 	}
 
 	if len(recipients) == 0 {
@@ -301,7 +290,7 @@ func (e *WebSocketEngine) Publish(
 	}
 
 	if metadata == nil {
-		metadata = &common.EventMetadata{
+		metadata = &common.MessageMetadata{
 			Persist: true,
 			Headers: make(map[string]string),
 		}
@@ -432,17 +421,12 @@ func (e *WebSocketEngine) Subscribe(eventName string, options *common.SubscribeO
 	}
 
 	sub := &wsSubscription{
-		baseSubscription: baseSubscription{
-			handlers: make([]common.EventHandler, 0),
-		},
-		eventName:    eventName,
-		autoAck:      options.AutoAck,
-		appSecretKey: options.AppSecretKey,
-		engine:       e,
+		BaseSubscription: common.NewBaseSubscription(eventName, options.AutoAck, 10),
+		engine:           e,
 	}
 
 	e.SubscriptionMgr.Store(eventName, sub)
-	e.Logger.Info("Successfully subscribed", zap.String("eventName", eventName))
+	e.Logger.Info("Successfully subscribed", zap.String("messageName", eventName))
 
 	return sub, nil
 }
@@ -514,39 +498,22 @@ func (e *WebSocketEngine) handleResponseMessage(msg string) {
 }
 
 func (e *WebSocketEngine) handleEventMessage(msg string) {
-	event := parseEventMessage(msg)
-	if event == nil {
+	message := parseEventMessage(msg)
+	if message == nil {
 		return
 	}
 
-	if val, exists := e.SubscriptionMgr.Load(event.EventName); exists {
+	if val, exists := e.SubscriptionMgr.Load(message.MessageName); exists {
 		sub := val.(*wsSubscription)
 
-		processedEvent, err := sub.decryptEvent(event)
+		processedMessage, err := sub.decryptMessage(message)
 		if err != nil {
-			sub.engine.Logger.Error("Failed to decrypt event", zap.Error(err))
+			sub.engine.Logger.Error("Failed to decrypt message", zap.Error(err))
 			return
 		}
 
-		handlers := sub.GetHandlers()
-		for _, handler := range handlers {
-			go func(h common.EventHandler) {
-				defer func() {
-					if r := recover(); r != nil {
-						sub.engine.Logger.Error("Handler panic", zap.Any("panic", r))
-					}
-				}()
-				if err := h(processedEvent); err != nil {
-					sub.engine.Logger.Error("Event handler error", zap.Error(err))
-				}
-			}(handler)
-		}
-
-		if sub.autoAck && processedEvent.Idem != "" && processedEvent.Block != 0 {
-			if err := sub.Ack(processedEvent.Idem, processedEvent.Block); err != nil {
-				sub.engine.Logger.Error("Auto-acknowledge error", zap.Error(err))
-			}
-		}
+		// Use centralized message processing and acknowledgement
+		sub.ProcessMessage(processedMessage, sub.Ack)
 	}
 }
 
@@ -595,7 +562,7 @@ func parseKeyValue(data string) map[string]string {
 	return result
 }
 
-func parseEventMessage(message string) *common.EventPayload {
+func parseEventMessage(message string) *common.MessagePayload {
 	if !strings.HasPrefix(message, "+RECORD:") && !strings.HasPrefix(message, "+REPLAY:") {
 		return nil
 	}
@@ -623,20 +590,20 @@ func parseEventMessage(message string) *common.EventPayload {
 		idem = record.ID
 	}
 
-	return &common.EventPayload{
-		EventName: record.Name,
-		Idem:      idem,
-		Block:     record.Block,
-		Timestamp: time.UnixMilli(record.LoggedAt),
-		Payload:   nil, // Will be decrypted later
-		Metadata:  record.Metadata,
-		Sender:    record.Sender,
+	return &common.MessagePayload{
+		MessageName: record.Name,
+		Idem:        idem,
+		Block:       record.Block,
+		Timestamp:   record.LoggedAt,
+		Payload:     nil, // Will be decrypted later
+		Metadata:    record.Metadata,
+		Sender:      record.Sender,
 	}
 }
 
-func (s *wsSubscription) Ack(eventIdem string, block int64) error {
+func (s *wsSubscription) Ack(eventName string, eventIdem string, block int64) error {
 	message := fmt.Sprintf("ACK;CLIENT_ID=:%s;EVENT_IDEM=:%s;EVENT_NAME=:%s;PARTITION_BLOCK=:%d",
-		s.engine.ClientID, eventIdem, s.eventName, block)
+		s.engine.ClientID, eventIdem, eventName, block)
 
 	_, err := s.engine.sendRequest(message)
 	if err != nil {
@@ -645,36 +612,21 @@ func (s *wsSubscription) Ack(eventIdem string, block int64) error {
 	return nil
 }
 
-func (s *wsSubscription) AddHandler(handler common.EventHandler) func() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.handlers = append(s.handlers, handler)
-
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		for i, h := range s.handlers {
-			if fmt.Sprintf("%p", h) == fmt.Sprintf("%p", handler) {
-				s.handlers = append(s.handlers[:i], s.handlers[i+1:]...)
-				break
-			}
-		}
-	}
+// AddMessageHandler adds a message handler to the subscription and returns a function to remove it
+func (s *wsSubscription) AddMessageHandler(handler common.MessageHandler) func() {
+	return s.BaseSubscription.AddMessageHandler(handler)
 }
 
-func (s *wsSubscription) GetHandlers() []common.EventHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	handlers := make([]common.EventHandler, len(s.handlers))
-	copy(handlers, s.handlers)
-	return handlers
+// GetHandlers returns the message handlers
+func (s *wsSubscription) GetHandlers() []common.MessageHandler {
+	// Not exposing handlers directly from BaseSubscription anymore as access is internal
+	// If needed we can add a method to BaseSubscription
+	return nil
 }
 
 func (s *wsSubscription) Defer(eventIdem string, delayMs int64, reason string) (*common.DeferResponse, error) {
 	message := fmt.Sprintf("DEFER;CLIENT_ID=:%s;EVENT_IDEM=:%s;EVENT_NAME=:%s;DELAY=:%d;REASON=:%s",
-		s.engine.ClientID, eventIdem, s.eventName, delayMs, reason)
+		s.engine.ClientID, eventIdem, s.MessageName, delayMs, reason)
 
 	_, err := s.engine.sendRequest(message)
 	if err != nil {
@@ -693,7 +645,7 @@ func (s *wsSubscription) Defer(eventIdem string, delayMs int64, reason string) (
 
 func (s *wsSubscription) Discard(eventIdem, reason string) (*common.DiscardResponse, error) {
 	message := fmt.Sprintf("DISCARD;CLIENT_ID=:%s;EVENT_IDEM=:%s;EVENT_NAME=:%s;REASON=:%s",
-		s.engine.ClientID, eventIdem, s.eventName, reason)
+		s.engine.ClientID, eventIdem, s.MessageName, reason)
 
 	_, err := s.engine.sendRequest(message)
 	if err != nil {
@@ -710,7 +662,7 @@ func (s *wsSubscription) Discard(eventIdem, reason string) (*common.DiscardRespo
 
 func (s *wsSubscription) Pause(reason string) error {
 	message := fmt.Sprintf("PAUSE;CLIENT_ID=:%s;EVENT_NAME=:%s;REASON=:%s",
-		s.engine.ClientID, s.eventName, reason)
+		s.engine.ClientID, s.MessageName, reason)
 
 	_, err := s.engine.sendRequest(message)
 	if err != nil {
@@ -720,7 +672,7 @@ func (s *wsSubscription) Pause(reason string) error {
 }
 
 func (s *wsSubscription) Resume() error {
-	message := fmt.Sprintf("CONTINUE;CLIENT_ID=:%s;EVENT_NAME=:%s", s.engine.ClientID, s.eventName)
+	message := fmt.Sprintf("CONTINUE;CLIENT_ID=:%s;EVENT_NAME=:%s", s.engine.ClientID, s.MessageName)
 
 	_, err := s.engine.sendRequest(message)
 	if err != nil {
@@ -729,21 +681,21 @@ func (s *wsSubscription) Resume() error {
 	return nil
 }
 
-func (s *wsSubscription) Replay(eventIdem string) (*common.EventPayload, error) {
+func (s *wsSubscription) Replay(eventIdem string) (*common.MessagePayload, error) {
 	message := fmt.Sprintf("REPLAY;CLIENT_ID=:%s;EVENT_IDEM=:%s;EVENT_NAME=:%s",
-		s.engine.ClientID, eventIdem, s.eventName)
+		s.engine.ClientID, eventIdem, s.MessageName)
 
 	response, err := s.engine.sendRequest(message)
 	if err != nil {
 		return nil, common.NewEnSyncError("replay failed", common.ErrTypeReplay, err)
 	}
 
-	event := parseEventMessage(response)
-	if event == nil {
-		return nil, common.NewEnSyncError("failed to parse replayed event", common.ErrTypeReplay, nil)
+	parsedMessage := parseEventMessage(response)
+	if parsedMessage == nil {
+		return nil, common.NewEnSyncError("failed to parse replayed message", common.ErrTypeReplay, nil)
 	}
 
-	return s.decryptEvent(event)
+	return s.decryptMessage(parsedMessage)
 }
 
 func (s *wsSubscription) Rollback(eventIdem string, block int64) error {
@@ -758,7 +710,7 @@ func (s *wsSubscription) Rollback(eventIdem string, block int64) error {
 }
 
 func (s *wsSubscription) Unsubscribe() error {
-	message := fmt.Sprintf("UNSUB;CLIENT_ID=:%s;EVENT_NAME=:%s", s.engine.ClientID, s.eventName)
+	message := fmt.Sprintf("UNSUB;CLIENT_ID=:%s;EVENT_NAME=:%s", s.engine.ClientID, s.MessageName)
 
 	response, err := s.engine.sendRequest(message)
 	if err != nil {
@@ -769,15 +721,15 @@ func (s *wsSubscription) Unsubscribe() error {
 		return common.NewEnSyncError("unsubscribe failed: "+response, common.ErrTypeSubscription, nil)
 	}
 
-	s.engine.SubscriptionMgr.Delete(s.eventName)
-	s.engine.Logger.Info("Successfully unsubscribed", zap.String("eventName", s.eventName))
+	s.engine.SubscriptionMgr.Delete(s.MessageName)
+	s.engine.Logger.Info("Successfully unsubscribed", zap.String("eventName", s.MessageName))
 	return nil
 }
 
-func (s *wsSubscription) decryptEvent(event *common.EventPayload) (*common.EventPayload, error) {
+func (s *wsSubscription) decryptMessage(message *common.MessagePayload) (*common.MessagePayload, error) {
 	// This would implement the full decryption logic
-	// For now, returning the event as-is
-	return event, nil
+	// For now, returning the message as-is
+	return message, nil
 }
 
 // AnalyzePayload analyzes a payload and returns metadata

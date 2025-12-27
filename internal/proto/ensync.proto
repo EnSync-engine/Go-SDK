@@ -14,22 +14,22 @@ service EnSyncService {
   rpc Connect(ConnectRequest) returns (ConnectResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   
-  // Event Publishing
-  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+  // Message Publishing
+  rpc PublishMessage(PublishMessageRequest) returns (PublishMessageResponse);
   
-  // Event Subscription - Returns a stream of events
-  rpc Subscribe(SubscribeRequest) returns (stream EventStreamResponse);
+  // Message Subscription - Returns a stream of messages
+  rpc Subscribe(SubscribeRequest) returns (stream MessageStreamResponse);
   rpc Unsubscribe(UnsubscribeRequest) returns (UnsubscribeResponse);
   
-  // Event Management
-  rpc AcknowledgeEvent(AcknowledgeRequest) returns (AcknowledgeResponse);
-  rpc DeferEvent(DeferRequest) returns (DeferResponse);
-  rpc DiscardEvent(DiscardRequest) returns (DiscardResponse);
-  rpc ReplayEvent(ReplayRequest) returns (ReplayResponse);
+  // Message Management
+  rpc AcknowledgeMessage(AcknowledgeRequest) returns (AcknowledgeResponse);
+  rpc DeferMessage(DeferRequest) returns (DeferResponse);
+  rpc DiscardMessage(DiscardRequest) returns (DiscardResponse);
+  rpc ReplayMessage(ReplayRequest) returns (ReplayResponse);
   
   // Flow Control
-  rpc PauseEvents(PauseRequest) returns (PauseResponse);
-  rpc ContinueEvents(ContinueRequest) returns (ContinueResponse);
+  rpc PauseMessages(PauseRequest) returns (PauseResponse);
+  rpc ContinueMessages(ContinueRequest) returns (ContinueResponse);
 }
 
 // Connection Messages
@@ -53,31 +53,31 @@ message HeartbeatResponse {
   bool success = 1;
 }
 
-// Event Publishing Messages
-message PublishEventRequest {
+// Message Publishing Messages
+message PublishMessageRequest {
   string client_id = 1;
-  string event_name = 2;
+  string message_name = 2;
   string payload = 3;
   string delivery_to = 4;
   string metadata = 5;
   optional string payload_metadata = 6;
 }
 
-message PublishEventResponse {
+message PublishMessageResponse {
   bool success = 1;
-  string event_idem = 2;
+  string message_idem = 2;
   string error_message = 3;
 }
 
-// Event Subscription Messages
+// Message Subscription Messages
 message SubscribeRequest {
   string client_id = 1;
-  string event_name = 2;
+  string message_name = 2;
 }
 
 message UnsubscribeRequest {
   string client_id = 1;
-  string event_name = 2;
+  string message_name = 2;
 }
 
 message UnsubscribeResponse {
@@ -85,20 +85,20 @@ message UnsubscribeResponse {
   string message = 2;
 }
 
-message EventStreamResponse {
-  string event_idem = 1;
-  string event_name = 2;
+message MessageStreamResponse {
+  string message_idem = 1;
+  string message_name = 2;
   string payload = 3;
   int64 partition_block = 4;
   string metadata = 5;
   string sender = 6;
 }
 
-// Event Management Messages
+// Message Management Messages
 message AcknowledgeRequest {
   string client_id = 1;
-  string event_idem = 2;
-  string event_name = 3;
+  string message_idem = 2;
+  string message_name = 3;
   int64 partition_block = 4;
 }
 
@@ -109,8 +109,8 @@ message AcknowledgeResponse {
 
 message DeferRequest {
   string client_id = 1;
-  string event_idem = 2;
-  string event_name = 3;
+  string message_idem = 2;
+  string message_name = 3;
   int64 delay_ms = 4;
   int32 priority = 5;
   string reason = 6;
@@ -124,8 +124,8 @@ message DeferResponse {
 
 message DiscardRequest {
   string client_id = 1;
-  string event_idem = 2;
-  string event_name = 3;
+  string message_idem = 2;
+  string message_name = 3;
   string reason = 4;
 }
 
@@ -136,20 +136,20 @@ message DiscardResponse {
 
 message ReplayRequest {
   string client_id = 1;
-  string event_idem = 2;
-  string event_name = 3;
+  string message_idem = 2;
+  string message_name = 3;
 }
 
 message ReplayResponse {
   bool success = 1;
   string message = 2;
-  string event_data = 3;
+  string message_data = 3;
 }
 
 // Flow Control Messages
 message PauseRequest {
   string client_id = 1;
-  string event_name = 2;
+  string message_name = 2;
   string reason = 3;
 }
 
@@ -160,7 +160,7 @@ message PauseResponse {
 
 message ContinueRequest {
   string client_id = 1;
-  string event_name = 2;
+  string message_name = 2;
 }
 
 message ContinueResponse {

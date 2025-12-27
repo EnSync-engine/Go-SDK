@@ -19,17 +19,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	EnSyncService_Connect_FullMethodName          = "/ensync.EnSyncService/Connect"
-	EnSyncService_Heartbeat_FullMethodName        = "/ensync.EnSyncService/Heartbeat"
-	EnSyncService_PublishEvent_FullMethodName     = "/ensync.EnSyncService/PublishEvent"
-	EnSyncService_Subscribe_FullMethodName        = "/ensync.EnSyncService/Subscribe"
-	EnSyncService_Unsubscribe_FullMethodName      = "/ensync.EnSyncService/Unsubscribe"
-	EnSyncService_AcknowledgeEvent_FullMethodName = "/ensync.EnSyncService/AcknowledgeEvent"
-	EnSyncService_DeferEvent_FullMethodName       = "/ensync.EnSyncService/DeferEvent"
-	EnSyncService_DiscardEvent_FullMethodName     = "/ensync.EnSyncService/DiscardEvent"
-	EnSyncService_ReplayEvent_FullMethodName      = "/ensync.EnSyncService/ReplayEvent"
-	EnSyncService_PauseEvents_FullMethodName      = "/ensync.EnSyncService/PauseEvents"
-	EnSyncService_ContinueEvents_FullMethodName   = "/ensync.EnSyncService/ContinueEvents"
+	EnSyncService_Connect_FullMethodName            = "/ensync.EnSyncService/Connect"
+	EnSyncService_Heartbeat_FullMethodName          = "/ensync.EnSyncService/Heartbeat"
+	EnSyncService_PublishMessage_FullMethodName     = "/ensync.EnSyncService/PublishMessage"
+	EnSyncService_Subscribe_FullMethodName          = "/ensync.EnSyncService/Subscribe"
+	EnSyncService_Unsubscribe_FullMethodName        = "/ensync.EnSyncService/Unsubscribe"
+	EnSyncService_AcknowledgeMessage_FullMethodName = "/ensync.EnSyncService/AcknowledgeMessage"
+	EnSyncService_DeferMessage_FullMethodName       = "/ensync.EnSyncService/DeferMessage"
+	EnSyncService_DiscardMessage_FullMethodName     = "/ensync.EnSyncService/DiscardMessage"
+	EnSyncService_ReplayMessage_FullMethodName      = "/ensync.EnSyncService/ReplayMessage"
+	EnSyncService_PauseMessages_FullMethodName      = "/ensync.EnSyncService/PauseMessages"
+	EnSyncService_ContinueMessages_FullMethodName   = "/ensync.EnSyncService/ContinueMessages"
 )
 
 // EnSyncServiceClient is the client API for EnSyncService service.
@@ -41,19 +41,19 @@ type EnSyncServiceClient interface {
 	// Connection & Authentication
 	Connect(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (*ConnectResponse, error)
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
-	// Event Publishing
-	PublishEvent(ctx context.Context, in *PublishEventRequest, opts ...grpc.CallOption) (*PublishEventResponse, error)
-	// Event Subscription - Returns a stream of events
-	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[EventStreamResponse], error)
+	// Message Publishing
+	PublishMessage(ctx context.Context, in *PublishMessageRequest, opts ...grpc.CallOption) (*PublishMessageResponse, error)
+	// Message Subscription - Returns a stream of messages
+	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MessageStreamResponse], error)
 	Unsubscribe(ctx context.Context, in *UnsubscribeRequest, opts ...grpc.CallOption) (*UnsubscribeResponse, error)
-	// Event Management
-	AcknowledgeEvent(ctx context.Context, in *AcknowledgeRequest, opts ...grpc.CallOption) (*AcknowledgeResponse, error)
-	DeferEvent(ctx context.Context, in *DeferRequest, opts ...grpc.CallOption) (*DeferResponse, error)
-	DiscardEvent(ctx context.Context, in *DiscardRequest, opts ...grpc.CallOption) (*DiscardResponse, error)
-	ReplayEvent(ctx context.Context, in *ReplayRequest, opts ...grpc.CallOption) (*ReplayResponse, error)
+	// Message Management
+	AcknowledgeMessage(ctx context.Context, in *AcknowledgeRequest, opts ...grpc.CallOption) (*AcknowledgeResponse, error)
+	DeferMessage(ctx context.Context, in *DeferRequest, opts ...grpc.CallOption) (*DeferResponse, error)
+	DiscardMessage(ctx context.Context, in *DiscardRequest, opts ...grpc.CallOption) (*DiscardResponse, error)
+	ReplayMessage(ctx context.Context, in *ReplayRequest, opts ...grpc.CallOption) (*ReplayResponse, error)
 	// Flow Control
-	PauseEvents(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*PauseResponse, error)
-	ContinueEvents(ctx context.Context, in *ContinueRequest, opts ...grpc.CallOption) (*ContinueResponse, error)
+	PauseMessages(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*PauseResponse, error)
+	ContinueMessages(ctx context.Context, in *ContinueRequest, opts ...grpc.CallOption) (*ContinueResponse, error)
 }
 
 type enSyncServiceClient struct {
@@ -84,23 +84,23 @@ func (c *enSyncServiceClient) Heartbeat(ctx context.Context, in *HeartbeatReques
 	return out, nil
 }
 
-func (c *enSyncServiceClient) PublishEvent(ctx context.Context, in *PublishEventRequest, opts ...grpc.CallOption) (*PublishEventResponse, error) {
+func (c *enSyncServiceClient) PublishMessage(ctx context.Context, in *PublishMessageRequest, opts ...grpc.CallOption) (*PublishMessageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PublishEventResponse)
-	err := c.cc.Invoke(ctx, EnSyncService_PublishEvent_FullMethodName, in, out, cOpts...)
+	out := new(PublishMessageResponse)
+	err := c.cc.Invoke(ctx, EnSyncService_PublishMessage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *enSyncServiceClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[EventStreamResponse], error) {
+func (c *enSyncServiceClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MessageStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &EnSyncService_ServiceDesc.Streams[0], EnSyncService_Subscribe_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[SubscribeRequest, EventStreamResponse]{ClientStream: stream}
+	x := &grpc.GenericClientStream[SubscribeRequest, MessageStreamResponse]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func (c *enSyncServiceClient) Subscribe(ctx context.Context, in *SubscribeReques
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type EnSyncService_SubscribeClient = grpc.ServerStreamingClient[EventStreamResponse]
+type EnSyncService_SubscribeClient = grpc.ServerStreamingClient[MessageStreamResponse]
 
 func (c *enSyncServiceClient) Unsubscribe(ctx context.Context, in *UnsubscribeRequest, opts ...grpc.CallOption) (*UnsubscribeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -123,60 +123,60 @@ func (c *enSyncServiceClient) Unsubscribe(ctx context.Context, in *UnsubscribeRe
 	return out, nil
 }
 
-func (c *enSyncServiceClient) AcknowledgeEvent(ctx context.Context, in *AcknowledgeRequest, opts ...grpc.CallOption) (*AcknowledgeResponse, error) {
+func (c *enSyncServiceClient) AcknowledgeMessage(ctx context.Context, in *AcknowledgeRequest, opts ...grpc.CallOption) (*AcknowledgeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AcknowledgeResponse)
-	err := c.cc.Invoke(ctx, EnSyncService_AcknowledgeEvent_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EnSyncService_AcknowledgeMessage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *enSyncServiceClient) DeferEvent(ctx context.Context, in *DeferRequest, opts ...grpc.CallOption) (*DeferResponse, error) {
+func (c *enSyncServiceClient) DeferMessage(ctx context.Context, in *DeferRequest, opts ...grpc.CallOption) (*DeferResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeferResponse)
-	err := c.cc.Invoke(ctx, EnSyncService_DeferEvent_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EnSyncService_DeferMessage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *enSyncServiceClient) DiscardEvent(ctx context.Context, in *DiscardRequest, opts ...grpc.CallOption) (*DiscardResponse, error) {
+func (c *enSyncServiceClient) DiscardMessage(ctx context.Context, in *DiscardRequest, opts ...grpc.CallOption) (*DiscardResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DiscardResponse)
-	err := c.cc.Invoke(ctx, EnSyncService_DiscardEvent_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EnSyncService_DiscardMessage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *enSyncServiceClient) ReplayEvent(ctx context.Context, in *ReplayRequest, opts ...grpc.CallOption) (*ReplayResponse, error) {
+func (c *enSyncServiceClient) ReplayMessage(ctx context.Context, in *ReplayRequest, opts ...grpc.CallOption) (*ReplayResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReplayResponse)
-	err := c.cc.Invoke(ctx, EnSyncService_ReplayEvent_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EnSyncService_ReplayMessage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *enSyncServiceClient) PauseEvents(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*PauseResponse, error) {
+func (c *enSyncServiceClient) PauseMessages(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*PauseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PauseResponse)
-	err := c.cc.Invoke(ctx, EnSyncService_PauseEvents_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EnSyncService_PauseMessages_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *enSyncServiceClient) ContinueEvents(ctx context.Context, in *ContinueRequest, opts ...grpc.CallOption) (*ContinueResponse, error) {
+func (c *enSyncServiceClient) ContinueMessages(ctx context.Context, in *ContinueRequest, opts ...grpc.CallOption) (*ContinueResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ContinueResponse)
-	err := c.cc.Invoke(ctx, EnSyncService_ContinueEvents_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EnSyncService_ContinueMessages_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -192,19 +192,19 @@ type EnSyncServiceServer interface {
 	// Connection & Authentication
 	Connect(context.Context, *ConnectRequest) (*ConnectResponse, error)
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
-	// Event Publishing
-	PublishEvent(context.Context, *PublishEventRequest) (*PublishEventResponse, error)
-	// Event Subscription - Returns a stream of events
-	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[EventStreamResponse]) error
+	// Message Publishing
+	PublishMessage(context.Context, *PublishMessageRequest) (*PublishMessageResponse, error)
+	// Message Subscription - Returns a stream of messages
+	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[MessageStreamResponse]) error
 	Unsubscribe(context.Context, *UnsubscribeRequest) (*UnsubscribeResponse, error)
-	// Event Management
-	AcknowledgeEvent(context.Context, *AcknowledgeRequest) (*AcknowledgeResponse, error)
-	DeferEvent(context.Context, *DeferRequest) (*DeferResponse, error)
-	DiscardEvent(context.Context, *DiscardRequest) (*DiscardResponse, error)
-	ReplayEvent(context.Context, *ReplayRequest) (*ReplayResponse, error)
+	// Message Management
+	AcknowledgeMessage(context.Context, *AcknowledgeRequest) (*AcknowledgeResponse, error)
+	DeferMessage(context.Context, *DeferRequest) (*DeferResponse, error)
+	DiscardMessage(context.Context, *DiscardRequest) (*DiscardResponse, error)
+	ReplayMessage(context.Context, *ReplayRequest) (*ReplayResponse, error)
 	// Flow Control
-	PauseEvents(context.Context, *PauseRequest) (*PauseResponse, error)
-	ContinueEvents(context.Context, *ContinueRequest) (*ContinueResponse, error)
+	PauseMessages(context.Context, *PauseRequest) (*PauseResponse, error)
+	ContinueMessages(context.Context, *ContinueRequest) (*ContinueResponse, error)
 	mustEmbedUnimplementedEnSyncServiceServer()
 }
 
@@ -221,32 +221,32 @@ func (UnimplementedEnSyncServiceServer) Connect(context.Context, *ConnectRequest
 func (UnimplementedEnSyncServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Heartbeat not implemented")
 }
-func (UnimplementedEnSyncServiceServer) PublishEvent(context.Context, *PublishEventRequest) (*PublishEventResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PublishEvent not implemented")
+func (UnimplementedEnSyncServiceServer) PublishMessage(context.Context, *PublishMessageRequest) (*PublishMessageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PublishMessage not implemented")
 }
-func (UnimplementedEnSyncServiceServer) Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[EventStreamResponse]) error {
+func (UnimplementedEnSyncServiceServer) Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[MessageStreamResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedEnSyncServiceServer) Unsubscribe(context.Context, *UnsubscribeRequest) (*UnsubscribeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Unsubscribe not implemented")
 }
-func (UnimplementedEnSyncServiceServer) AcknowledgeEvent(context.Context, *AcknowledgeRequest) (*AcknowledgeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AcknowledgeEvent not implemented")
+func (UnimplementedEnSyncServiceServer) AcknowledgeMessage(context.Context, *AcknowledgeRequest) (*AcknowledgeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcknowledgeMessage not implemented")
 }
-func (UnimplementedEnSyncServiceServer) DeferEvent(context.Context, *DeferRequest) (*DeferResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeferEvent not implemented")
+func (UnimplementedEnSyncServiceServer) DeferMessage(context.Context, *DeferRequest) (*DeferResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeferMessage not implemented")
 }
-func (UnimplementedEnSyncServiceServer) DiscardEvent(context.Context, *DiscardRequest) (*DiscardResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DiscardEvent not implemented")
+func (UnimplementedEnSyncServiceServer) DiscardMessage(context.Context, *DiscardRequest) (*DiscardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DiscardMessage not implemented")
 }
-func (UnimplementedEnSyncServiceServer) ReplayEvent(context.Context, *ReplayRequest) (*ReplayResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReplayEvent not implemented")
+func (UnimplementedEnSyncServiceServer) ReplayMessage(context.Context, *ReplayRequest) (*ReplayResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReplayMessage not implemented")
 }
-func (UnimplementedEnSyncServiceServer) PauseEvents(context.Context, *PauseRequest) (*PauseResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PauseEvents not implemented")
+func (UnimplementedEnSyncServiceServer) PauseMessages(context.Context, *PauseRequest) (*PauseResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PauseMessages not implemented")
 }
-func (UnimplementedEnSyncServiceServer) ContinueEvents(context.Context, *ContinueRequest) (*ContinueResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ContinueEvents not implemented")
+func (UnimplementedEnSyncServiceServer) ContinueMessages(context.Context, *ContinueRequest) (*ContinueResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ContinueMessages not implemented")
 }
 func (UnimplementedEnSyncServiceServer) mustEmbedUnimplementedEnSyncServiceServer() {}
 func (UnimplementedEnSyncServiceServer) testEmbeddedByValue()                       {}
@@ -305,20 +305,20 @@ func _EnSyncService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EnSyncService_PublishEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PublishEventRequest)
+func _EnSyncService_PublishMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PublishMessageRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EnSyncServiceServer).PublishEvent(ctx, in)
+		return srv.(EnSyncServiceServer).PublishMessage(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EnSyncService_PublishEvent_FullMethodName,
+		FullMethod: EnSyncService_PublishMessage_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EnSyncServiceServer).PublishEvent(ctx, req.(*PublishEventRequest))
+		return srv.(EnSyncServiceServer).PublishMessage(ctx, req.(*PublishMessageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -328,11 +328,11 @@ func _EnSyncService_Subscribe_Handler(srv interface{}, stream grpc.ServerStream)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(EnSyncServiceServer).Subscribe(m, &grpc.GenericServerStream[SubscribeRequest, EventStreamResponse]{ServerStream: stream})
+	return srv.(EnSyncServiceServer).Subscribe(m, &grpc.GenericServerStream[SubscribeRequest, MessageStreamResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type EnSyncService_SubscribeServer = grpc.ServerStreamingServer[EventStreamResponse]
+type EnSyncService_SubscribeServer = grpc.ServerStreamingServer[MessageStreamResponse]
 
 func _EnSyncService_Unsubscribe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UnsubscribeRequest)
@@ -352,110 +352,110 @@ func _EnSyncService_Unsubscribe_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EnSyncService_AcknowledgeEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EnSyncService_AcknowledgeMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AcknowledgeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EnSyncServiceServer).AcknowledgeEvent(ctx, in)
+		return srv.(EnSyncServiceServer).AcknowledgeMessage(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EnSyncService_AcknowledgeEvent_FullMethodName,
+		FullMethod: EnSyncService_AcknowledgeMessage_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EnSyncServiceServer).AcknowledgeEvent(ctx, req.(*AcknowledgeRequest))
+		return srv.(EnSyncServiceServer).AcknowledgeMessage(ctx, req.(*AcknowledgeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EnSyncService_DeferEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EnSyncService_DeferMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeferRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EnSyncServiceServer).DeferEvent(ctx, in)
+		return srv.(EnSyncServiceServer).DeferMessage(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EnSyncService_DeferEvent_FullMethodName,
+		FullMethod: EnSyncService_DeferMessage_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EnSyncServiceServer).DeferEvent(ctx, req.(*DeferRequest))
+		return srv.(EnSyncServiceServer).DeferMessage(ctx, req.(*DeferRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EnSyncService_DiscardEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EnSyncService_DiscardMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DiscardRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EnSyncServiceServer).DiscardEvent(ctx, in)
+		return srv.(EnSyncServiceServer).DiscardMessage(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EnSyncService_DiscardEvent_FullMethodName,
+		FullMethod: EnSyncService_DiscardMessage_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EnSyncServiceServer).DiscardEvent(ctx, req.(*DiscardRequest))
+		return srv.(EnSyncServiceServer).DiscardMessage(ctx, req.(*DiscardRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EnSyncService_ReplayEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EnSyncService_ReplayMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReplayRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EnSyncServiceServer).ReplayEvent(ctx, in)
+		return srv.(EnSyncServiceServer).ReplayMessage(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EnSyncService_ReplayEvent_FullMethodName,
+		FullMethod: EnSyncService_ReplayMessage_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EnSyncServiceServer).ReplayEvent(ctx, req.(*ReplayRequest))
+		return srv.(EnSyncServiceServer).ReplayMessage(ctx, req.(*ReplayRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EnSyncService_PauseEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EnSyncService_PauseMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PauseRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EnSyncServiceServer).PauseEvents(ctx, in)
+		return srv.(EnSyncServiceServer).PauseMessages(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EnSyncService_PauseEvents_FullMethodName,
+		FullMethod: EnSyncService_PauseMessages_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EnSyncServiceServer).PauseEvents(ctx, req.(*PauseRequest))
+		return srv.(EnSyncServiceServer).PauseMessages(ctx, req.(*PauseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EnSyncService_ContinueEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EnSyncService_ContinueMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ContinueRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EnSyncServiceServer).ContinueEvents(ctx, in)
+		return srv.(EnSyncServiceServer).ContinueMessages(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EnSyncService_ContinueEvents_FullMethodName,
+		FullMethod: EnSyncService_ContinueMessages_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EnSyncServiceServer).ContinueEvents(ctx, req.(*ContinueRequest))
+		return srv.(EnSyncServiceServer).ContinueMessages(ctx, req.(*ContinueRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -476,36 +476,36 @@ var EnSyncService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _EnSyncService_Heartbeat_Handler,
 		},
 		{
-			MethodName: "PublishEvent",
-			Handler:    _EnSyncService_PublishEvent_Handler,
+			MethodName: "PublishMessage",
+			Handler:    _EnSyncService_PublishMessage_Handler,
 		},
 		{
 			MethodName: "Unsubscribe",
 			Handler:    _EnSyncService_Unsubscribe_Handler,
 		},
 		{
-			MethodName: "AcknowledgeEvent",
-			Handler:    _EnSyncService_AcknowledgeEvent_Handler,
+			MethodName: "AcknowledgeMessage",
+			Handler:    _EnSyncService_AcknowledgeMessage_Handler,
 		},
 		{
-			MethodName: "DeferEvent",
-			Handler:    _EnSyncService_DeferEvent_Handler,
+			MethodName: "DeferMessage",
+			Handler:    _EnSyncService_DeferMessage_Handler,
 		},
 		{
-			MethodName: "DiscardEvent",
-			Handler:    _EnSyncService_DiscardEvent_Handler,
+			MethodName: "DiscardMessage",
+			Handler:    _EnSyncService_DiscardMessage_Handler,
 		},
 		{
-			MethodName: "ReplayEvent",
-			Handler:    _EnSyncService_ReplayEvent_Handler,
+			MethodName: "ReplayMessage",
+			Handler:    _EnSyncService_ReplayMessage_Handler,
 		},
 		{
-			MethodName: "PauseEvents",
-			Handler:    _EnSyncService_PauseEvents_Handler,
+			MethodName: "PauseMessages",
+			Handler:    _EnSyncService_PauseMessages_Handler,
 		},
 		{
-			MethodName: "ContinueEvents",
-			Handler:    _EnSyncService_ContinueEvents_Handler,
+			MethodName: "ContinueMessages",
+			Handler:    _EnSyncService_ContinueMessages_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

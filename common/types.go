@@ -6,21 +6,22 @@ import (
 	"time"
 )
 
-// EventMetadata represents metadata for an event
-type EventMetadata struct {
+// MessageMetadata represents metadata for a message
+type MessageMetadata struct {
 	Persist bool              `json:"persist"`
 	Headers map[string]string `json:"headers"`
 }
 
-// EventPayload represents a received event
-type EventPayload struct {
-	EventName string                 `json:"eventName"`
-	Idem      string                 `json:"idem"`
-	Block     int64                  `json:"block"`
-	Timestamp time.Time              `json:"timestamp"`
-	Payload   map[string]interface{} `json:"payload"`
-	Metadata  map[string]interface{} `json:"metadata"`
-	Sender    string                 `json:"sender"`
+// MessagePayload represents a received message (message-based API pattern)
+// This mirrors the Python SDK's message structure
+type MessagePayload struct {
+	Idem        string                 `json:"idem"`
+	MessageName string                 `json:"messageName"`
+	Block       int64                  `json:"block"`
+	Timestamp   int64                  `json:"timestamp"`
+	Payload     map[string]interface{} `json:"payload"`
+	Sender      string                 `json:"sender"`
+	Metadata    map[string]interface{} `json:"metadata"`
 }
 
 // PublishOptions contains options for publishing events
@@ -69,20 +70,21 @@ type ContinueResponse struct {
 
 // PayloadMetadata represents metadata about a payload
 type PayloadMetadata struct {
-	ByteSize int               `json:"byteSize"`
+	ByteSize int               `json:"byte_size"`
 	Skeleton map[string]string `json:"skeleton"`
 }
 
 // EventHandler is a function that handles incoming events
-type EventHandler func(*EventPayload) error
+type MessageHandler func(*MessagePayload) error
 
 // Subscription represents an active subscription to an event
 type Subscription interface {
-	// AddHandler registers an event handler for this subscription
-	AddHandler(handler EventHandler) func()
+	// AddMessageHandler registers a message handler for this subscription (message-based API)
+	AddMessageHandler(handler MessageHandler) func()
 
 	// Ack acknowledges an event
-	Ack(eventIdem string, block int64) error
+	// Parameters: eventName, eventIdem, block
+	Ack(eventName string, eventIdem string, block int64) error
 
 	// Resume resumes event processing
 	Resume() error
@@ -100,7 +102,7 @@ type Subscription interface {
 	Rollback(eventIdem string, block int64) error
 
 	// Replay requests a specific event to be sent again
-	Replay(eventIdem string) (*EventPayload, error)
+	Replay(eventIdem string) (*MessagePayload, error)
 
 	// Unsubscribe unsubscribes from the event
 	Unsubscribe() error
@@ -116,7 +118,7 @@ type Engine interface {
 		eventName string,
 		recipients []string,
 		payload map[string]interface{},
-		metadata *EventMetadata,
+		metadata *MessageMetadata,
 		options *PublishOptions,
 	) (string, error)
 

@@ -86,20 +86,23 @@ func TestAnalyzePayloadEmptyPayload(t *testing.T) {
 	}
 }
 
-func TestEventPayloadStructure(t *testing.T) {
+func TestMessagePayloadStructure(t *testing.T) {
 	now := time.Now()
-	payload := EventPayload{
-		EventName: "test/event",
-		Idem:      "test-id",
-		Block:     123,
-		Timestamp: now,
-		Payload:   map[string]interface{}{"test": "data"},
-		Metadata:  map[string]interface{}{"source": "test"},
-		Sender:    "test-sender",
+	payload := MessagePayload{
+		MessageName: "test/event",
+		Idem:        "test-id",
+		Block:       123,
+		Timestamp:   now.Unix(),
+		Payload:     map[string]interface{}{"test": "data"},
+		Metadata: map[string]interface{}{
+			"persist": true,
+			"headers": map[string]interface{}{"source": "test"},
+		},
+		Sender: "test-sender",
 	}
 
-	if payload.EventName != "test/event" {
-		t.Errorf("Expected EventName 'test/event', got %s", payload.EventName)
+	if payload.MessageName != "test/event" {
+		t.Errorf("Expected MessageName 'test/event', got %s", payload.MessageName)
 	}
 
 	if payload.Idem != "test-id" {
@@ -110,7 +113,7 @@ func TestEventPayloadStructure(t *testing.T) {
 		t.Errorf("Expected Block 123, got %d", payload.Block)
 	}
 
-	if !payload.Timestamp.Equal(now) {
+	if payload.Timestamp != now.Unix() {
 		t.Errorf("Expected Timestamp %v, got %v", now, payload.Timestamp)
 	}
 
@@ -119,8 +122,8 @@ func TestEventPayloadStructure(t *testing.T) {
 	}
 }
 
-func TestEventMetadata(t *testing.T) {
-	metadata := EventMetadata{
+func TestMessageMetadata(t *testing.T) {
+	metadata := MessageMetadata{
 		Persist: true,
 		Headers: map[string]string{
 			"content-type": "application/json",
