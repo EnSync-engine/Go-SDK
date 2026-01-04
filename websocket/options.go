@@ -33,7 +33,5 @@ func parseWebSocketURL(endpoint string) (string, error) {
 		return "", fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
 
-	// Add message endpoint
-	u.Path = "/message"
 	return u.String(), nil
 }

@@ -11,7 +11,7 @@ type TimeoutConfig struct {
 }
 
 // DefaultTimeoutConfig returns sensible default timeout values
-func DefaultTimeoutConfig() *TimeoutConfig {
+func defaultTimeoutConfig() *TimeoutConfig {
 	return &TimeoutConfig{
 		OperationTimeout:        5 * time.Second,
 		GracefulShutdownTimeout: 10 * time.Second,
@@ -20,19 +20,37 @@ func DefaultTimeoutConfig() *TimeoutConfig {
 	}
 }
 
+type ConcurrencyConfig struct {
+	PublishConcurrency int
+	RecvBufferSize     int
+	RecvTimeout        time.Duration
+	CleanupDelay       time.Duration
+}
+
+func defaultConcurrencyConfig() *ConcurrencyConfig {
+	return &ConcurrencyConfig{
+		PublishConcurrency: 10,
+		RecvBufferSize:     100,
+		RecvTimeout:        100 * time.Millisecond,
+		CleanupDelay:       100 * time.Millisecond,
+	}
+}
+
 type engineConfig struct {
-	logger         Logger
-	circuitBreaker *circuitBreakerConfig
-	retryConfig    *retryConfig
-	timeoutConfig  *TimeoutConfig
+	logger            Logger
+	circuitBreaker    *circuitBreakerConfig
+	retryConfig       *retryConfig
+	timeoutConfig     *TimeoutConfig
+	concurrencyConfig *ConcurrencyConfig
 }
 
 func defaultEngineConfig() *engineConfig {
 	return &engineConfig{
-		circuitBreaker: defaultCircuitBreakerConfig(),
-		retryConfig:    defaultRetryConfig(),
-		logger:         &noopLogger{},
-		timeoutConfig:  DefaultTimeoutConfig(),
+		circuitBreaker:    defaultCircuitBreakerConfig(),
+		retryConfig:       defaultRetryConfig(),
+		logger:            &noopLogger{},
+		timeoutConfig:     defaultTimeoutConfig(),
+		concurrencyConfig: defaultConcurrencyConfig(),
 	}
 }
 
@@ -96,7 +114,7 @@ func WithTimeoutOptions(opts ...Option) Option {
 func WithOperationTimeout(timeout time.Duration) Option {
 	return func(c *engineConfig) {
 		if c.timeoutConfig == nil {
-			c.timeoutConfig = DefaultTimeoutConfig()
+			c.timeoutConfig = defaultTimeoutConfig()
 		}
 		c.timeoutConfig.OperationTimeout = timeout
 	}
@@ -106,7 +124,7 @@ func WithOperationTimeout(timeout time.Duration) Option {
 func WithGracefulShutdownTimeout(timeout time.Duration) Option {
 	return func(c *engineConfig) {
 		if c.timeoutConfig == nil {
-			c.timeoutConfig = DefaultTimeoutConfig()
+			c.timeoutConfig = defaultTimeoutConfig()
 		}
 		c.timeoutConfig.GracefulShutdownTimeout = timeout
 	}
@@ -116,7 +134,7 @@ func WithGracefulShutdownTimeout(timeout time.Duration) Option {
 func WithPingInterval(interval time.Duration) Option {
 	return func(c *engineConfig) {
 		if c.timeoutConfig == nil {
-			c.timeoutConfig = DefaultTimeoutConfig()
+			c.timeoutConfig = defaultTimeoutConfig()
 		}
 		c.timeoutConfig.PingInterval = interval
 	}
@@ -126,28 +144,8 @@ func WithPingInterval(interval time.Duration) Option {
 func WithConnectionTimeout(timeout time.Duration) Option {
 	return func(c *engineConfig) {
 		if c.timeoutConfig == nil {
-			c.timeoutConfig = DefaultTimeoutConfig()
+			c.timeoutConfig = defaultTimeoutConfig()
 		}
 		c.timeoutConfig.ConnectionTimeout = timeout
-	}
-}
-
-// Client configuration options
-type ClientOption func(*ClientConfig)
-
-type ClientConfig struct {
-	AppSecretKey string
-	ClientID     string
-}
-
-func WithAppSecretKey(secretKey string) ClientOption {
-	return func(c *ClientConfig) {
-		c.AppSecretKey = secretKey
-	}
-}
-
-func WithClientID(clientID string) ClientOption {
-	return func(c *ClientConfig) {
-		c.ClientID = clientID
 	}
 }

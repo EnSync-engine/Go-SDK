@@ -47,4 +47,3 @@ Thumbs.db
 bin/
 dist/
 build/
-main.go

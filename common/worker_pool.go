@@ -1,20 +1,23 @@
 package common
 
 import (
+	"log"
+	"runtime/debug"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
-// WorkerPool manages a pool of workers to process tasks concurrently
 type WorkerPool struct {
-	tasks chan func()
-	wg    sync.WaitGroup
-	quit  chan struct{}
+	tasks   chan func()
+	wg      sync.WaitGroup
+	quit    chan struct{}
+	stopped int32
 }
 
-// NewWorkerPool creates a new WorkerPool with the specified number of workers
 func NewWorkerPool(numWorkers int) *WorkerPool {
 	pool := &WorkerPool{
-		tasks: make(chan func(), numWorkers*2), // Buffer size 2x workers
+		tasks: make(chan func(), numWorkers*2),
 		quit:  make(chan struct{}),
 	}
 
@@ -26,7 +29,6 @@ func NewWorkerPool(numWorkers int) *WorkerPool {
 	return pool
 }
 
-// worker processes tasks from the tasks channel
 func (p *WorkerPool) worker() {
 	defer p.wg.Done()
 	for {
@@ -35,8 +37,8 @@ func (p *WorkerPool) worker() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						// Log panic but keep worker alive
-						// In a real app we'd want access to the logger here
+						log.Printf("[ERROR] Worker panic recovered: %v\nStack trace:\n%s",
+							r, string(debug.Stack()))
 					}
 				}()
 				task()
@@ -47,17 +49,35 @@ func (p *WorkerPool) worker() {
 	}
 }
 
-// Submit submits a task to the worker pool
-func (p *WorkerPool) Submit(task func()) {
+func (p *WorkerPool) Submit(task func()) bool {
+	if atomic.LoadInt32(&p.stopped) == 1 {
+		return false
+	}
+
 	select {
-	case p.tasks <- task:
 	case <-p.quit:
-		// Pool is shutting down, don't accept new tasks
+		return false
+	case p.tasks <- task:
+		return true
+	case <-time.After(100 * time.Millisecond):
+		return false
 	}
 }
 
-// Stop stops the worker pool and waits for all workers to finish
 func (p *WorkerPool) Stop() {
+	atomic.StoreInt32(&p.stopped, 1)
 	close(p.quit)
-	p.wg.Wait()
+
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		p.wg.Wait()
+	}()
+
+	select {
+	case <-c:
+		return
+	case <-time.After(5 * time.Second):
+		log.Println("[WARN] Worker pool stop timed out; some tasks may not have completed")
+	}
 }

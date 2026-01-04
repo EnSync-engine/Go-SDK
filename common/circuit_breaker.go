@@ -133,7 +133,6 @@ func (cb *circuitBreaker) RecordSuccess() {
 		}
 
 	case circuitStateClosed:
-		// Already in closed state, reset counters to be safe
 		cb.resetCounters()
 	}
 }
@@ -155,7 +154,6 @@ func (cb *circuitBreaker) canAttempt() bool {
 		timeSinceFailure := time.Since(cb.lastFailureTime)
 
 		if timeSinceFailure > resetTimeout {
-			// Need to upgrade to write lock
 			cb.mu.RUnlock()
 			cb.mu.Lock()
 

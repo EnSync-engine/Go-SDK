@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 type engineState struct {
@@ -41,6 +42,14 @@ func (b *BaseEngineBuilder) Build(ctx context.Context) (*BaseEngine, error) {
 		b.config.retryConfig = defaultRetryConfig()
 	}
 
+	if b.config.timeoutConfig == nil {
+		b.config.timeoutConfig = defaultTimeoutConfig()
+	}
+
+	if b.config.concurrencyConfig == nil {
+		b.config.concurrencyConfig = defaultConcurrencyConfig()
+	}
+
 	engine := &BaseEngine{
 		config:          b.config,
 		State:           engineState{},
@@ -59,13 +68,15 @@ func (b *BaseEngineBuilder) Build(ctx context.Context) (*BaseEngine, error) {
 
 type BaseEngine struct {
 	AccessKey       string
-	AppSecretKey    string
+	appSecretKey    string
+	keyMu           sync.RWMutex
 	State           engineState
 	ClientID        string
 	Logger          Logger
 	ClientHash      string
 	SubscriptionMgr *SubscriptionManager
 	Ctx             context.Context
+	ctxCancel       context.CancelFunc
 	config          *engineConfig
 	circuitBreaker  *circuitBreaker
 	retryConfig     *retryConfig
@@ -80,7 +91,15 @@ func NewBaseEngine(ctx context.Context, opts ...Option) (*BaseEngine, error) {
 		return nil, err
 	}
 
+	baseEngine.Ctx, baseEngine.ctxCancel = context.WithCancel(ctx)
+
 	return baseEngine, nil
+}
+
+func (b *BaseEngine) GetAppSecretKey() string {
+	b.keyMu.RLock()
+	defer b.keyMu.RUnlock()
+	return b.appSecretKey
 }
 
 func (b *BaseEngine) recordFailure() {
@@ -123,19 +142,16 @@ func (b *BaseEngine) canAttemptConnection() bool {
 	return b.circuitBreaker.canAttempt()
 }
 
-// IsConnected returns whether the engine is currently connected
 func (e *BaseEngine) IsConnected() bool {
 	e.State.Mu.RLock()
 	defer e.State.Mu.RUnlock()
 	return e.State.IsConnected && e.State.IsAuthenticated
 }
 
-// GetClientID returns the client's ID
 func (e *BaseEngine) GetClientID() string {
 	return e.ClientID
 }
 
-// SetAuthenticated sets the engine as authenticated and connected
 func (e *BaseEngine) SetAuthenticated(clientID, clientHash string) {
 	e.ClientID = clientID
 	e.ClientHash = clientHash
@@ -146,20 +162,54 @@ func (e *BaseEngine) SetAuthenticated(clientID, clientHash string) {
 	e.State.Mu.Unlock()
 }
 
-// SetConnectionState updates the connection state
 func (e *BaseEngine) SetConnectionState(connected bool) {
 	e.State.Mu.Lock()
 	e.State.IsConnected = connected
 	if !connected {
-		e.State.IsAuthenticated = false // Ensure auth is cleared on disconnect
+		e.State.IsAuthenticated = false
 	}
 	e.State.Mu.Unlock()
 }
 
-// ResetState resets the engine state (e.g. on close)
 func (e *BaseEngine) ResetState() {
 	e.State.Mu.Lock()
 	e.State.IsAuthenticated = false
 	e.State.IsConnected = false
 	e.State.Mu.Unlock()
+
+	if e.ctxCancel != nil {
+		e.ctxCancel()
+	}
+}
+
+func (e *BaseEngine) GetOperationTimeout() time.Duration {
+	return e.config.timeoutConfig.OperationTimeout
+}
+
+func (e *BaseEngine) GetConnectionTimeout() time.Duration {
+	return e.config.timeoutConfig.ConnectionTimeout
+}
+
+func (e *BaseEngine) GetPingInterval() time.Duration {
+	return e.config.timeoutConfig.PingInterval
+}
+
+func (e *BaseEngine) GetGracefulShutdownTimeout() time.Duration {
+	return e.config.timeoutConfig.GracefulShutdownTimeout
+}
+
+func (e *BaseEngine) GetPublishConcurrency() int {
+	return e.config.concurrencyConfig.PublishConcurrency
+}
+
+func (e *BaseEngine) GetRecvBufferSize() int {
+	return e.config.concurrencyConfig.RecvBufferSize
+}
+
+func (e *BaseEngine) GetRecvTimeout() time.Duration {
+	return e.config.concurrencyConfig.RecvTimeout
+}
+
+func (e *BaseEngine) GetCleanupDelay() time.Duration {
+	return e.config.concurrencyConfig.CleanupDelay
 }

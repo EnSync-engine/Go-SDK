@@ -181,7 +181,7 @@ func TestResponseTypes(t *testing.T) {
 	deferResp := DeferResponse{
 		Status:            "success",
 		Action:            "defer",
-		EventID:           "test-event",
+		MessageID:         "test-event",
 		DelayMs:           5000,
 		ScheduledDelivery: now,
 		Timestamp:         now,
@@ -198,7 +198,7 @@ func TestResponseTypes(t *testing.T) {
 	discardResp := DiscardResponse{
 		Status:    "success",
 		Action:    "discard",
-		EventID:   "test-event",
+		MessageID: "test-event",
 		Timestamp: now,
 	}
 
@@ -207,10 +207,10 @@ func TestResponseTypes(t *testing.T) {
 	}
 
 	pauseResp := PauseResponse{
-		Status:    "success",
-		Action:    "pause",
-		EventName: "test/event",
-		Reason:    "maintenance",
+		Status:      "success",
+		Action:      "pause",
+		MessageName: "test/event",
+		Reason:      "maintenance",
 	}
 
 	if pauseResp.Reason != "maintenance" {
@@ -218,9 +218,9 @@ func TestResponseTypes(t *testing.T) {
 	}
 
 	continueResp := ContinueResponse{
-		Status:    "success",
-		Action:    "continue",
-		EventName: "test/event",
+		Status:      "success",
+		Action:      "continue",
+		MessageName: "test/event",
 	}
 
 	if continueResp.Action != "continue" {

@@ -40,7 +40,7 @@ func main() {
 		"timestamp":     1234567890,
 	}
 
-	metadata := &common.EventMetadata{
+	metadata := &common.MessageMetadata{
 		Persist: true,
 		Headers: map[string]string{
 			"source": "pos-system",

@@ -1,73 +1,104 @@
 package common
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 type BaseSubscription struct {
 	MessageName string
-	handlers    []MessageHandler
+	handlers    map[string]MessageHandler
 	mu          sync.RWMutex
-	active      bool
+	active      atomic.Bool
 	workerPool  *WorkerPool
 	autoAck     bool
 }
 
-func NewBaseSubscription(messageName string, autoAck bool, workerCount int) BaseSubscription {
-	return BaseSubscription{
+func NewBaseSubscription(messageName string, autoAck bool, workerCount int) *BaseSubscription {
+	s := &BaseSubscription{
 		MessageName: messageName,
-		handlers:    make([]MessageHandler, 0),
-		active:      true,
+		handlers:    make(map[string]MessageHandler),
 		workerPool:  NewWorkerPool(workerCount),
 		autoAck:     autoAck,
 	}
+	s.active.Store(true)
+	return s
+}
+
+func generateID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }
 
 func (s *BaseSubscription) AddMessageHandler(handler MessageHandler) func() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.handlers = append(s.handlers, handler)
+	id := generateID()
+	if id == "" {
+		id = fmt.Sprintf("%p", handler)
+	}
+
+	s.handlers[id] = handler
 
 	return func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-
-		for i, h := range s.handlers {
-			if fmt.Sprintf("%p", h) == fmt.Sprintf("%p", handler) {
-				s.handlers = append(s.handlers[:i], s.handlers[i+1:]...)
-				break
-			}
-		}
+		delete(s.handlers, id)
 	}
 }
 
-func (s *BaseSubscription) ProcessMessage(msg *MessagePayload, ackFunc func(string, string, int64) error) {
-	if !s.active {
+func (s *BaseSubscription) ProcessMessage(msg *MessagePayload, logger Logger, ackFunc func(string, string, int64) error) {
+	if !s.active.Load() {
 		return
 	}
 
-	s.workerPool.Submit(func() {
+	submitted := s.workerPool.Submit(func() {
 		s.mu.RLock()
-		handlers := make([]MessageHandler, len(s.handlers))
-		copy(handlers, s.handlers)
+		handlers := make([]MessageHandler, 0, len(s.handlers))
+		for _, h := range s.handlers {
+			handlers = append(handlers, h)
+		}
 		s.mu.RUnlock()
 
 		for _, handler := range handlers {
-			if err := handler(msg); err != nil {
-				continue
+			ctx := &MessageContext{
+				Message: msg,
+				ack: func() error {
+					if ackFunc != nil {
+						return ackFunc(msg.MessageName, msg.Idem, msg.Block)
+					}
+					return nil
+				},
+			}
+
+			handler(ctx)
+
+			if s.autoAck && !ctx.WasControlCalled() && ackFunc != nil {
+				if err := ackFunc(msg.MessageName, msg.Idem, msg.Block); err != nil {
+					if logger != nil {
+						logger.Error("Failed to auto-ACK message", "idem", msg.Idem, "error", err)
+					}
+				}
 			}
 		}
-
-		if s.autoAck && msg.Idem != "" && msg.Block != 0 && ackFunc != nil {
-			_ = ackFunc(msg.MessageName, msg.Idem, msg.Block)
-		}
 	})
+
+	if !submitted {
+		if logger != nil {
+			logger.Warn("Message dropped: worker pool full or stopped", "messageName", s.MessageName, "idem", msg.Idem)
+		}
+	}
 }
 
 func (s *BaseSubscription) Close() {
-	s.active = false
+	s.active.Store(false)
 	if s.workerPool != nil {
 		s.workerPool.Stop()
 	}

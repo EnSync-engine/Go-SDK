@@ -111,28 +111,6 @@ func TestWithDefaultRetryConfig(t *testing.T) {
 	}
 }
 
-func TestWithAppSecretKey(t *testing.T) {
-	config := &ClientConfig{}
-	secretKey := "test-secret-key"
-	option := WithAppSecretKey(secretKey)
-	option(config)
-
-	if config.AppSecretKey != secretKey {
-		t.Errorf("Expected AppSecretKey %s, got %s", secretKey, config.AppSecretKey)
-	}
-}
-
-func TestWithClientID(t *testing.T) {
-	config := &ClientConfig{}
-	clientID := "test-client-id"
-	option := WithClientID(clientID)
-	option(config)
-
-	if config.ClientID != clientID {
-		t.Errorf("Expected ClientID %s, got %s", clientID, config.ClientID)
-	}
-}
-
 // Test logger implementation for testing
 type testLogger struct {
 	logs []string

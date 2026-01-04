@@ -34,29 +34,19 @@ func main() {
 	}()
 
 	// Subscribe to event
-	eventName := "yourcompany/payment/POS/PAYMENT_SUCCESSFUL"
-	subscription, err := engine.Subscribe(eventName, &common.SubscribeOptions{
-		AutoAck: true,
+	subscription, err := engine.Subscribe("test-event", &common.SubscribeOptions{
+		AutoAck:      true,
+		AppSecretKey: "your-app-secret-key",
 	})
 	if err != nil {
-		log.Printf("Failed to subscribe: %v", err)
-		return
+		log.Fatalf("Subscribe failed: %v", err)
 	}
 
 	// Register event handler
-	subscription.AddHandler(func(event *common.EventPayload) error {
-		log.Printf("Received event: %s", event.EventName)
-		log.Printf("Event ID: %s", event.Idem)
-		log.Printf("Event Block: %d", event.Block)
-		log.Printf("Event Data: %+v", event.Payload)
-		log.Printf("Event Timestamp: %v", event.Timestamp)
-		log.Printf("Event Sender: %s", event.Sender)
+	subscription.AddMessageHandler(func(ctx *common.MessageContext) {
+		processPaymentEvent(ctx.Message)
 
-		// Process the event
-		// For example, update database, send notification, etc.
-		processPaymentEvent(event)
-
-		return nil
+		return
 	})
 
 	log.Println("Listening for events... Press Ctrl+C to exit")
@@ -72,7 +62,7 @@ func main() {
 	}
 }
 
-func processPaymentEvent(event *common.EventPayload) {
+func processPaymentEvent(event *common.MessagePayload) {
 	// Extract payment data
 	transactionID, _ := event.Payload["transactionId"].(string)
 	amount, _ := event.Payload["amount"].(float64)

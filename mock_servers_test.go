@@ -42,20 +42,20 @@ func (m *SimpleMockGRPCServer) Connect(ctx context.Context, req *pb.ConnectReque
 	}, nil
 }
 
-func (m *SimpleMockGRPCServer) PublishEvent(ctx context.Context, req *pb.PublishEventRequest) (*pb.PublishEventResponse, error) {
+func (m *SimpleMockGRPCServer) PublishMessage(ctx context.Context, req *pb.PublishMessageRequest) (*pb.PublishMessageResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.authenticated {
-		return &pb.PublishEventResponse{
+		return &pb.PublishMessageResponse{
 			Success:      false,
 			ErrorMessage: "not authenticated",
 		}, nil
 	}
 
-	return &pb.PublishEventResponse{
-		Success:   true,
-		EventIdem: "mock-event-id",
+	return &pb.PublishMessageResponse{
+		Success:     true,
+		MessageIdem: "mock-message-id",
 	}, nil
 }
 
@@ -125,7 +125,7 @@ func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 		"currency": "USD",
 	}
 
-	metadata := &common.EventMetadata{
+	metadata := &common.MessageMetadata{
 		Persist: true,
 		Headers: map[string]string{
 			"source": "payment-service",

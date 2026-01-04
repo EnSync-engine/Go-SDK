@@ -2,18 +2,18 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	"github.com/EnSync-engine/Go-SDK/common"
@@ -21,37 +21,25 @@ import (
 )
 
 const (
-	defaultConnectionTimeout = 10 * time.Second
-	defaultOperationTimeout  = 5 * time.Second
-	heartbeatInterval        = 30 * time.Second
-	shutdownTimeout          = 5 * time.Second
-	cleanupDelay             = 100 * time.Millisecond
-
-	defaultMaxMessageSize = 1024 * 1024
-	defaultMaxRecvSize    = 2 * 1024 * 1024
-	maxSafeMessageSize    = 10 * 1024 * 1024
+	statusDeferred  = "deferred"
+	statusSuccess   = "success"
+	actionDiscarded = "discarded"
 )
 
 type GRPCEngine struct {
 	*common.BaseEngine
-	client pb.EnSyncServiceClient
-	conn   *grpc.ClientConn
+	client    pb.EnSyncServiceClient
+	conn      *grpc.ClientConn
+	closeOnce sync.Once
+	closed    atomic.Bool
 }
 
-type baseSubscription = common.BaseSubscription
-
 type grpcSubscription struct {
-	baseSubscription
+	*common.BaseSubscription
 	stream       pb.EnSyncService_SubscribeClient
 	appSecretKey string
 	engine       *GRPCEngine
 	cancel       context.CancelFunc
-}
-
-type publishData struct {
-	PayloadJSON     []byte
-	MetadataJSON    []byte
-	PayloadMetaJSON []byte
 }
 
 func NewGRPCEngine(
@@ -63,37 +51,21 @@ func NewGRPCEngine(
 		return nil, common.NewEnSyncError("context cannot be nil", common.ErrTypeValidation, nil)
 	}
 
+	if endpoint == "" {
+		return nil, common.NewEnSyncError("endpoint cannot be empty", common.ErrTypeValidation, nil)
+	}
+
 	host, secure, err := parseGRPCURL(endpoint)
 	if err != nil {
 		return nil, err
 	}
-
-	serverName := extractServerName(host)
 
 	baseEngine, err := common.NewBaseEngine(ctx, opts...)
 	if err != nil {
 		return nil, common.NewEnSyncError("failed to create base engine", common.ErrTypeConnection, err)
 	}
 
-	var creds credentials.TransportCredentials
-	if secure {
-		creds = credentials.NewTLS(&tls.Config{
-			ServerName: serverName,
-			MinVersion: tls.VersionTLS12,
-		})
-	} else {
-		creds = insecure.NewCredentials()
-	}
-
-	grpcOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(creds),
-		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(defaultMaxRecvSize),
-			grpc.MaxCallSendMsgSize(defaultMaxMessageSize),
-		),
-	}
-
-	conn, err := grpc.NewClient(host, grpcOpts...)
+	conn, err := createClientConn(host, secure)
 	if err != nil {
 		return nil, common.NewEnSyncError("failed to connect to gRPC server", common.ErrTypeConnection, err)
 	}
@@ -107,17 +79,8 @@ func NewGRPCEngine(
 	return engine, nil
 }
 
-func (e *GRPCEngine) CreateClient(accessKey string, options ...common.ClientOption) error {
+func (e *GRPCEngine) CreateClient(accessKey string) error {
 	e.AccessKey = accessKey
-
-	config := &common.ClientConfig{}
-	for _, opt := range options {
-		opt(config)
-	}
-
-	if config.ClientID != "" {
-		e.ClientID = config.ClientID
-	}
 
 	if err := e.authenticate(); err != nil {
 		return err
@@ -126,9 +89,7 @@ func (e *GRPCEngine) CreateClient(accessKey string, options ...common.ClientOpti
 }
 
 func (e *GRPCEngine) authenticate() error {
-	e.Logger.Info("Sending authentication request")
-
-	ctx, cancel := context.WithTimeout(e.Ctx, defaultConnectionTimeout)
+	ctx, cancel := context.WithTimeout(e.Ctx, e.GetConnectionTimeout())
 	defer cancel()
 
 	resp, err := e.client.Connect(ctx, &pb.ConnectRequest{
@@ -149,7 +110,7 @@ func (e *GRPCEngine) authenticate() error {
 }
 
 func (e *GRPCEngine) startHeartbeat() {
-	ticker := time.NewTicker(heartbeatInterval)
+	ticker := time.NewTicker(e.GetPingInterval())
 	defer ticker.Stop()
 
 	for {
@@ -167,12 +128,12 @@ func (e *GRPCEngine) startHeartbeat() {
 }
 
 func (e *GRPCEngine) sendHeartbeat() error {
-	if !e.State.IsAuthenticated {
+	if !e.IsConnected() {
 		return nil
 	}
 
 	return e.WithRetry(e.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(e.Ctx, e.GetOperationTimeout())
 		defer cancel()
 
 		resp, err := e.client.Heartbeat(ctx, &pb.HeartbeatRequest{
@@ -195,11 +156,14 @@ func (e *GRPCEngine) Publish(
 	metadata *common.MessageMetadata,
 	options *common.PublishOptions,
 ) (string, error) {
+	if e.closed.Load() {
+		return "", common.NewEnSyncError("engine is closed", common.ErrTypeConnection, nil)
+	}
 	if !e.IsConnected() {
 		return "", common.NewEnSyncError("client not connected/authenticated", common.ErrTypeConnection, nil)
 	}
 	if len(recipients) == 0 {
-		return "", fmt.Errorf("recipients required")
+		return "", common.NewEnSyncError("recipients required", common.ErrTypeValidation, nil)
 	}
 
 	if metadata == nil {
@@ -214,13 +178,11 @@ func (e *GRPCEngine) Publish(
 		useHybridEncryption = options.UseHybridEncryption
 	}
 
-	// Prepare data
 	publishData, err := e.preparePublishData(payload, metadata)
 	if err != nil {
 		return "", err
 	}
 
-	// Execute publish
 	return e.executePublish(
 		eventName, recipients,
 		publishData.PayloadJSON, publishData.MetadataJSON, publishData.PayloadMetaJSON,
@@ -231,7 +193,7 @@ func (e *GRPCEngine) Publish(
 func (e *GRPCEngine) preparePublishData(
 	payload map[string]interface{},
 	metadata *common.MessageMetadata,
-) (*publishData, error) {
+) (*common.PublishData, error) {
 	if metadata == nil {
 		metadata = &common.MessageMetadata{
 			Persist: true,
@@ -255,7 +217,7 @@ func (e *GRPCEngine) preparePublishData(
 		return nil, common.NewEnSyncError("failed to marshal metadata", common.ErrTypePublish, err)
 	}
 
-	return &publishData{
+	return &common.PublishData{
 		PayloadJSON:     payloadJSON,
 		MetadataJSON:    metadataJSON,
 		PayloadMetaJSON: payloadMetaJSON,
@@ -268,16 +230,24 @@ func (e *GRPCEngine) executePublish(
 	payloadJSON, metadataJSON, payloadMetaJSON []byte,
 	useHybrid bool,
 ) (string, error) {
-	var responses []string
-	err := e.WithRetry(e.Ctx, func() error {
-		if useHybrid {
-			return e.publishHybrid(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, &responses)
-		}
-		return e.publishIndividual(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, &responses)
-	})
+	responseChan := make(chan string, len(recipients))
+	var err error
+
+	if useHybrid {
+		err = e.publishHybrid(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, responseChan)
+	} else {
+		err = e.publishIndividual(eventName, recipients, payloadJSON, metadataJSON, payloadMetaJSON, responseChan)
+	}
+
+	close(responseChan)
+
+	responses := make([]string, 0, len(recipients))
+	for id := range responseChan {
+		responses = append(responses, id)
+	}
 
 	if err != nil {
-		return "", common.NewEnSyncError("publish failed after retries", common.ErrTypePublish, err)
+		return "", common.NewEnSyncError("publish failed", common.ErrTypePublish, err)
 	}
 
 	return strings.Join(responses, ","), nil
@@ -287,7 +257,7 @@ func (e *GRPCEngine) publishHybrid(
 	eventName string,
 	recipients []string,
 	payloadJSON, metadataJSON, payloadMetaJSON []byte,
-	responses *[]string,
+	responseChan chan<- string,
 ) error {
 	hybridMsg, err := common.HybridEncrypt(string(payloadJSON), recipients)
 	if err != nil {
@@ -303,7 +273,7 @@ func (e *GRPCEngine) publishHybrid(
 
 	for _, recipient := range recipients {
 		err := e.WithRetry(e.Ctx, func() error {
-			return e.sendPublishRequest(eventName, recipient, encryptedBase64, string(metadataJSON), string(payloadMetaJSON), responses)
+			return e.sendPublishRequest(eventName, recipient, encryptedBase64, string(metadataJSON), string(payloadMetaJSON), responseChan)
 		})
 		if err != nil {
 			e.Logger.Error(fmt.Sprintf("Failed to publish to recipient: %v", err),
@@ -319,7 +289,7 @@ func (e *GRPCEngine) publishIndividual(
 	eventName string,
 	recipients []string,
 	payloadJSON, metadataJSON, payloadMetaJSON []byte,
-	responses *[]string,
+	responseChan chan<- string,
 ) error {
 	for _, recipient := range recipients {
 		err := e.WithRetry(e.Ctx, func() error {
@@ -339,14 +309,14 @@ func (e *GRPCEngine) publishIndividual(
 			}
 
 			encryptedBase64 := base64.StdEncoding.EncodeToString(encryptedJSON)
-			return e.sendPublishRequest(eventName, recipient, encryptedBase64, string(metadataJSON), string(payloadMetaJSON), responses)
+			return e.sendPublishRequest(eventName, recipient, encryptedBase64, string(metadataJSON), string(payloadMetaJSON), responseChan)
 		})
 
 		if err != nil {
 			e.Logger.Error(fmt.Sprintf("Failed to publish to recipient: %v", err),
 				"recipient", recipient,
 				"eventName", eventName)
-			return err // Already wrapped by WithRetry
+			return err
 		}
 	}
 	return nil
@@ -354,9 +324,9 @@ func (e *GRPCEngine) publishIndividual(
 
 func (e *GRPCEngine) sendPublishRequest(
 	eventName, recipient, payload, metadata, payloadMeta string,
-	responses *[]string,
+	responseChan chan<- string,
 ) error {
-	ctx, cancel := context.WithTimeout(e.Ctx, defaultOperationTimeout)
+	ctx, cancel := context.WithTimeout(e.Ctx, e.GetOperationTimeout())
 	defer cancel()
 
 	req := &pb.PublishMessageRequest{
@@ -386,7 +356,7 @@ func (e *GRPCEngine) sendPublishRequest(
 		return common.NewEnSyncError("publish rejected: "+resp.ErrorMessage, common.ErrTypePublish, nil)
 	}
 
-	*responses = append(*responses, resp.MessageIdem)
+	responseChan <- resp.MessageIdem
 	return nil
 }
 
@@ -405,52 +375,43 @@ func (e *GRPCEngine) Subscribe(messageName string, options *common.SubscribeOpti
 		}
 	}
 
-	var sub *grpcSubscription
-	retryErr := e.WithRetry(e.Ctx, func() error {
-		subCtx, cancel := context.WithCancel(e.Ctx)
+	subCtx, cancel := context.WithCancel(e.Ctx)
 
-		stream, err := e.client.Subscribe(subCtx, &pb.SubscribeRequest{
-			ClientId:    e.ClientID,
-			MessageName: messageName,
-		})
-
-		if err != nil {
-			cancel()
-			return common.NewEnSyncError("subscription stream error", common.ErrTypeSubscription, err)
-		}
-
-		sub = &grpcSubscription{
-			baseSubscription: common.NewBaseSubscription(messageName, options.AutoAck, 10),
-			stream:           stream,
-			appSecretKey:     options.AppSecretKey,
-			engine:           e,
-			cancel:           cancel,
-		}
-
-		e.SubscriptionMgr.Store(messageName, sub)
-		go sub.listen()
-
-		e.Logger.Info("Successfully subscribed", zap.String("messageName", messageName))
-		return nil
+	stream, err := e.client.Subscribe(subCtx, &pb.SubscribeRequest{
+		ClientId:    e.ClientID,
+		MessageName: messageName,
 	})
 
-	if retryErr != nil {
-		return nil, common.NewEnSyncError("subscription failed after retries", common.ErrTypeSubscription, retryErr)
+	if err != nil {
+		cancel()
+		return nil, common.NewEnSyncError("subscription stream error", common.ErrTypeSubscription, err)
 	}
 
+	sub := &grpcSubscription{
+		BaseSubscription: common.NewBaseSubscription(messageName, options.AutoAck, 10),
+		stream:           stream,
+		appSecretKey:     options.AppSecretKey,
+		engine:           e,
+		cancel:           cancel,
+	}
+
+	e.SubscriptionMgr.Store(messageName, sub)
+	go sub.listen()
+
+	e.Logger.Info("Successfully subscribed", zap.String("messageName", messageName))
 	return sub, nil
 }
 
-func (s *grpcSubscription) Defer(eventIdem string, delayMs int64, reason string) (*common.DeferResponse, error) {
+func (s *grpcSubscription) Defer(messageIdem string, delayMs int64, reason string) (*common.DeferResponse, error) {
 	var resp *common.DeferResponse
 
 	err := s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, s.engine.GetOperationTimeout())
 		defer cancel()
 
 		deferResp, deferErr := s.engine.client.DeferMessage(ctx, &pb.DeferRequest{
 			ClientId:    s.engine.ClientID,
-			MessageIdem: eventIdem,
+			MessageIdem: messageIdem,
 			DelayMs:     delayMs,
 			Reason:      reason,
 		})
@@ -464,8 +425,8 @@ func (s *grpcSubscription) Defer(eventIdem string, delayMs int64, reason string)
 		}
 
 		resp = &common.DeferResponse{
-			EventID:           eventIdem,
-			Status:            "deferred",
+			MessageID:         messageIdem,
+			Status:            statusDeferred,
 			DelayMs:           delayMs,
 			ScheduledDelivery: time.Now().Add(time.Duration(delayMs) * time.Millisecond),
 			Timestamp:         time.Now(),
@@ -480,16 +441,16 @@ func (s *grpcSubscription) Defer(eventIdem string, delayMs int64, reason string)
 	return resp, nil
 }
 
-func (s *grpcSubscription) Discard(eventIdem, reason string) (*common.DiscardResponse, error) {
+func (s *grpcSubscription) Discard(messageIdem, reason string) (*common.DiscardResponse, error) {
 	var resp *common.DiscardResponse
 
 	err := s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, s.engine.GetOperationTimeout())
 		defer cancel()
 
 		discardResp, discardErr := s.engine.client.DiscardMessage(ctx, &pb.DiscardRequest{
 			ClientId:    s.engine.ClientID,
-			MessageIdem: eventIdem,
+			MessageIdem: messageIdem,
 			Reason:      reason,
 		})
 
@@ -502,9 +463,9 @@ func (s *grpcSubscription) Discard(eventIdem, reason string) (*common.DiscardRes
 		}
 
 		resp = &common.DiscardResponse{
-			EventID:   eventIdem,
-			Status:    "success",
-			Action:    "discarded",
+			MessageID: messageIdem,
+			Status:    statusSuccess,
+			Action:    actionDiscarded,
 			Timestamp: time.Now(),
 		}
 		return nil
@@ -519,7 +480,7 @@ func (s *grpcSubscription) Discard(eventIdem, reason string) (*common.DiscardRes
 
 func (s *grpcSubscription) Pause(reason string) error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, s.engine.GetOperationTimeout())
 		defer cancel()
 
 		resp, err := s.engine.client.PauseMessages(ctx, &pb.PauseRequest{
@@ -542,7 +503,7 @@ func (s *grpcSubscription) Pause(reason string) error {
 
 func (s *grpcSubscription) Resume() error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, s.engine.GetOperationTimeout())
 		defer cancel()
 
 		resp, err := s.engine.client.ContinueMessages(ctx, &pb.ContinueRequest{
@@ -562,18 +523,18 @@ func (s *grpcSubscription) Resume() error {
 	})
 }
 
-func (s *grpcSubscription) Replay(eventIdem string) (*common.MessagePayload, error) {
+func (s *grpcSubscription) Replay(messageIdem string) (*common.MessagePayload, error) {
 	var result *common.MessagePayload
 
 	err := s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, s.engine.GetOperationTimeout())
 		defer cancel()
 
 		resp, replayErr := s.engine.client.ReplayMessage(
 			ctx, &pb.ReplayRequest{
 				ClientId:    s.engine.ClientID,
 				MessageName: s.MessageName,
-				MessageIdem: eventIdem,
+				MessageIdem: messageIdem,
 			})
 
 		if replayErr != nil {
@@ -614,7 +575,31 @@ func (s *grpcSubscription) listen() {
 		if r := recover(); r != nil {
 			s.engine.Logger.Error("Subscription listener panic",
 				zap.String("eventName", s.MessageName),
-				zap.Any("panic", r))
+				zap.Any("panic", r),
+				zap.String("stack", string(debug.Stack())))
+		}
+	}()
+
+	recvChan := make(chan *pb.MessageStreamResponse, s.engine.GetRecvBufferSize())
+	errChan := make(chan error, 1)
+	recvDone := make(chan struct{})
+
+	go func() {
+		defer close(recvDone)
+		for {
+			event, err := s.stream.Recv()
+			if err != nil {
+				select {
+				case errChan <- err:
+				case <-s.engine.Ctx.Done():
+				}
+				return
+			}
+			select {
+			case recvChan <- event:
+			case <-s.engine.Ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -623,14 +608,24 @@ func (s *grpcSubscription) listen() {
 		case <-s.engine.Ctx.Done():
 			s.engine.Logger.Info("Subscription listener stopped due to context cancellation",
 				zap.String("eventName", s.MessageName))
-			return
-		default:
-			event, err := s.stream.Recv()
-			if err != nil {
-				s.handleStreamError(err)
-				return
+
+			s.cancel()
+
+			select {
+			case <-recvDone:
+			case <-time.After(s.engine.GetRecvTimeout()):
+				s.engine.Logger.Warn("Stream receiver still blocked after timeout, may indicate stuck gRPC stream",
+					zap.String("eventName", s.MessageName),
+					zap.Duration("timeout", s.engine.GetRecvTimeout()))
 			}
+			return
+
+		case event := <-recvChan:
 			s.handleMessage(event)
+
+		case err := <-errChan:
+			s.handleStreamError(err)
+			return
 		}
 	}
 }
@@ -649,7 +644,6 @@ func (s *grpcSubscription) handleStreamError(err error) {
 		return
 	}
 
-	// Log as error only if it's not a expected cancellation
 	s.engine.Logger.Error("Stream receive error",
 		zap.String("eventName", s.MessageName),
 		zap.Error(err))
@@ -670,7 +664,7 @@ func (s *grpcSubscription) handleMessage(event *pb.MessageStreamResponse) {
 		return
 	}
 
-	s.baseSubscription.ProcessMessage(processedMessage, s.Ack)
+	s.BaseSubscription.ProcessMessage(processedMessage, s.engine.Logger, s.Ack)
 }
 
 func (s *grpcSubscription) processMessage(message *pb.MessageStreamResponse) (*common.MessagePayload, error) {
@@ -680,7 +674,6 @@ func (s *grpcSubscription) processMessage(message *pb.MessageStreamResponse) (*c
 		return nil, common.NewEnSyncError("no decryption key available", common.ErrTypeSubscription, nil)
 	}
 
-	// Decode and decrypt payload
 	decodedPayload, err := base64.StdEncoding.DecodeString(message.Payload)
 	if err != nil {
 		return nil, common.NewEnSyncError("failed to decode payload", common.ErrTypeSubscription, err)
@@ -741,7 +734,7 @@ func (s *grpcSubscription) processMessage(message *pb.MessageStreamResponse) (*c
 
 func (s *grpcSubscription) Ack(eventName string, eventID string, block int64) error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, s.engine.GetOperationTimeout())
 		defer cancel()
 
 		resp, err := s.engine.client.AcknowledgeMessage(ctx, &pb.AcknowledgeRequest{
@@ -765,7 +758,7 @@ func (s *grpcSubscription) Ack(eventName string, eventID string, block int64) er
 
 func (s *grpcSubscription) Unsubscribe() error {
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
-		ctx, cancel := context.WithTimeout(s.engine.Ctx, defaultOperationTimeout)
+		ctx, cancel := context.WithTimeout(s.engine.Ctx, s.engine.GetOperationTimeout())
 		defer cancel()
 
 		resp, err := s.engine.client.Unsubscribe(ctx, &pb.UnsubscribeRequest{
@@ -790,41 +783,48 @@ func (s *grpcSubscription) Unsubscribe() error {
 }
 
 func (e *GRPCEngine) Close() error {
-	e.Logger.Info("Shutting down gRPC engine")
+	var closeErr error
 
-	e.ResetState()
+	e.closeOnce.Do(func() {
+		e.closed.Store(true)
+		e.Logger.Info("Shutting down gRPC engine")
 
-	// Close all subscriptions with timeout
-	done := make(chan bool)
-	go func() {
-		e.SubscriptionMgr.Range(func(key, value interface{}) bool {
-			if sub, ok := value.(*grpcSubscription); ok {
-				sub.cancel()
-				// Give some time for cleanup
-				time.Sleep(cleanupDelay)
-			}
-			e.SubscriptionMgr.Delete(key.(string))
-			return true
-		})
-		close(done)
-	}()
+		e.ResetState()
 
-	// Wait for cleanup with timeout
-	select {
-	case <-done:
-		e.Logger.Info("All subscriptions closed successfully")
-	case <-time.After(shutdownTimeout):
-		e.Logger.Warn("Timeout waiting for subscriptions to close")
-	}
+		// Close all subscriptions with timeout
+		done := make(chan bool)
+		go func() {
+			e.SubscriptionMgr.Range(func(key, value interface{}) bool {
+				if sub, ok := value.(*grpcSubscription); ok {
+					sub.cancel()
+					// Give some time for cleanup
+					time.Sleep(e.GetCleanupDelay())
+				}
+				e.SubscriptionMgr.Delete(key.(string))
+				return true
+			})
+			close(done)
+		}()
 
-	// Close gRPC connection
-	if e.conn != nil {
-		if err := e.conn.Close(); err != nil {
-			e.Logger.Error("Error closing gRPC connection", zap.Error(err))
-			return common.NewEnSyncError("failed to close gRPC connection", common.ErrTypeConnection, err)
+		// Wait for cleanup with timeout
+		select {
+		case <-done:
+			e.Logger.Info("All subscriptions closed successfully")
+		case <-time.After(e.GetGracefulShutdownTimeout()):
+			e.Logger.Warn("Graceful shutdown timed out, forcing close")
 		}
-	}
 
-	e.Logger.Info("gRPC engine shutdown complete")
-	return nil
+		// Close gRPC connection
+		if e.conn != nil {
+			if err := e.conn.Close(); err != nil {
+				e.Logger.Error("Error closing gRPC connection", zap.Error(err))
+				closeErr = common.NewEnSyncError("failed to close gRPC connection", common.ErrTypeConnection, err)
+				return
+			}
+		}
+
+		e.Logger.Info("gRPC engine shutdown complete")
+	})
+
+	return closeErr
 }

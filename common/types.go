@@ -29,17 +29,23 @@ type PublishOptions struct {
 	UseHybridEncryption bool `json:"useHybridEncryption"`
 }
 
+type PublishData struct {
+	PayloadJSON     []byte
+	MetadataJSON    []byte
+	PayloadMetaJSON []byte
+}
+
 // SubscribeOptions contains options for subscribing to events
 type SubscribeOptions struct {
-	AutoAck      bool   `json:"autoAck"`
-	AppSecretKey string `json:"appSecretKey"`
+	AutoAck      bool
+	AppSecretKey string
 }
 
 // DeferResponse represents the response from a defer operation
 type DeferResponse struct {
 	Status            string    `json:"status"`
 	Action            string    `json:"action"`
-	EventID           string    `json:"eventId"`
+	MessageID         string    `json:"messageId"`
 	DelayMs           int64     `json:"delayMs"`
 	ScheduledDelivery time.Time `json:"scheduledDelivery"`
 	Timestamp         time.Time `json:"timestamp"`
@@ -49,23 +55,23 @@ type DeferResponse struct {
 type DiscardResponse struct {
 	Status    string    `json:"status"`
 	Action    string    `json:"action"`
-	EventID   string    `json:"eventId"`
+	MessageID string    `json:"messageId"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
 // PauseResponse represents the response from a pause operation
 type PauseResponse struct {
-	Status    string `json:"status"`
-	Action    string `json:"action"`
-	EventName string `json:"eventName"`
-	Reason    string `json:"reason,omitempty"`
+	Status      string `json:"status"`
+	Action      string `json:"action"`
+	MessageName string `json:"messageName"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // ContinueResponse represents the response from a continue operation
 type ContinueResponse struct {
-	Status    string `json:"status"`
-	Action    string `json:"action"`
-	EventName string `json:"eventName"`
+	Status      string `json:"status"`
+	Action      string `json:"action"`
+	MessageName string `json:"messageName"`
 }
 
 // PayloadMetadata represents metadata about a payload
@@ -75,7 +81,7 @@ type PayloadMetadata struct {
 }
 
 // EventHandler is a function that handles incoming events
-type MessageHandler func(*MessagePayload) error
+type MessageHandler func(ctx *MessageContext)
 
 // Subscription represents an active subscription to an event
 type Subscription interface {
@@ -111,7 +117,7 @@ type Subscription interface {
 // Engine is the main interface for EnSync clients
 type Engine interface {
 	// CreateClient creates and authenticates a new client
-	CreateClient(accessKey string, options ...ClientOption) error
+	CreateClient(accessKey string) error
 
 	// Publish publishes an event to the EnSync system
 	Publish(
