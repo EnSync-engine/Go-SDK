@@ -275,13 +275,13 @@ func (s *grpcSubscription) handleStreamError(err error) {
 
 	if s.engine.IsConnected() {
 		s.engine.Logger().Debug("Attempting local resubscription", zap.String("eventName", s.MessageName))
-		if resubErr := s.resubscribe(); resubErr == nil {
+		if err := s.resubscribe(); err == nil {
 			s.engine.Logger().Debug("Local resubscription successful", zap.String("eventName", s.MessageName))
 			return
 		} else {
 			s.engine.Logger().Warn("Local resubscription failed",
 				zap.String("eventName", s.MessageName),
-				zap.Error(resubErr))
+				zap.Error(err))
 		}
 	}
 

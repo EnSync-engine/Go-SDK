@@ -64,11 +64,12 @@ func WithLogger(logger Logger) Option {
 	}
 }
 
-func WithCircuitBreaker(threshold int, resetTimeout time.Duration) Option {
+func WithCircuitBreaker(threshold int, resetTimeout, maxResetTimeout time.Duration) Option {
 	return func(c *engineConfig) {
 		c.circuitBreaker = &circuitBreakerConfig{
 			FailureThreshold: threshold,
 			ResetTimeout:     resetTimeout,
+			MaxResetTimeout:  maxResetTimeout,
 		}
 	}
 }
