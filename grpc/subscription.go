@@ -313,8 +313,6 @@ func (s *grpcSubscription) Stop() {
 }
 
 func (s *grpcSubscription) resubscribe() error {
-	s.Stop()
-
 	return s.engine.WithRetry(s.engine.Ctx, func() error {
 		if !s.engine.IsConnected() {
 			return common.NewEnSyncError("engine disconnected", common.ErrTypeConnection, nil)
@@ -338,10 +336,15 @@ func (s *grpcSubscription) resubscribe() error {
 		}
 
 		s.mu.Lock()
+		// Cancel the old stream context to make the old listener exit
+		if s.cancel != nil {
+			s.cancel()
+		}
 		s.stream = stream
 		s.cancel = cancel
 		s.mu.Unlock()
 
+		// Start new listener - old one will exit when it sees context cancellation
 		go s.listen(stream)
 		return nil
 	})
