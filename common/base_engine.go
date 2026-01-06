@@ -78,7 +78,6 @@ type BaseEngine struct {
 	closed       atomic.Bool
 	Reconnecting atomic.Bool
 	clientID     string
-	clientHash   string
 	accessKey    string
 
 	// Context Management
@@ -162,7 +161,7 @@ func (b *BaseEngine) recordFailure() {
 	b.circuitBreaker.RecordFailure()
 	newState := b.circuitBreaker.state
 
-	if oldState != newState && b.Logger != nil {
+	if oldState != newState {
 		b.Logger().Info("Circuit breaker state changed",
 			"oldState", oldState,
 			"newState", newState,
@@ -179,7 +178,7 @@ func (b *BaseEngine) recordSuccess() {
 	b.circuitBreaker.RecordSuccess()
 	newState := b.circuitBreaker.state
 
-	if oldState != newState && b.Logger != nil {
+	if oldState != newState {
 		b.Logger().Info("Circuit breaker state changed",
 			"oldState", oldState,
 			"newState", newState)
