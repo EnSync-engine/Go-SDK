@@ -2,10 +2,8 @@ package common
 
 import (
 	"log"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type WorkerPool struct {
@@ -17,7 +15,7 @@ type WorkerPool struct {
 
 func NewWorkerPool(numWorkers int) *WorkerPool {
 	pool := &WorkerPool{
-		tasks: make(chan func(), numWorkers*2),
+		tasks: make(chan func(), numWorkers*workerTaskBufferMultiplier),
 		quit:  make(chan struct{}),
 	}
 
@@ -37,8 +35,7 @@ func (p *WorkerPool) worker() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						log.Printf("[ERROR] Worker panic recovered: %v\nStack trace:\n%s",
-							r, string(debug.Stack()))
+						log.Printf("[ERROR] Worker panic recovered: %v", r)
 					}
 				}()
 				task()
@@ -59,7 +56,7 @@ func (p *WorkerPool) Submit(task func()) bool {
 		return false
 	case p.tasks <- task:
 		return true
-	case <-time.After(100 * time.Millisecond):
+	default:
 		return false
 	}
 }
@@ -67,17 +64,5 @@ func (p *WorkerPool) Submit(task func()) bool {
 func (p *WorkerPool) Stop() {
 	atomic.StoreInt32(&p.stopped, 1)
 	close(p.quit)
-
-	c := make(chan struct{})
-	go func() {
-		defer close(c)
-		p.wg.Wait()
-	}()
-
-	select {
-	case <-c:
-		return
-	case <-time.After(5 * time.Second):
-		log.Println("[WARN] Worker pool stop timed out; some tasks may not have completed")
-	}
+	p.wg.Wait()
 }

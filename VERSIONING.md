@@ -13,6 +13,16 @@ We follow [Semantic Versioning](https://semver.org/) (SemVer):
 
 ### Using Makefile (Recommended)
 
+## [Unreleased]
+
+### Fixed
+- Fixed type mismatch in subscription metadata (`map[string]interface{}` -> `MessageMetadata`).
+- Restored error tracking in `restoreSubscriptions` for WebSocket engine to ensure failures are reported.
+
+### Changed
+- Refactored WebSocket internal protocol strings to constants.
+
+
 The easiest way to manage versions is using the provided Makefile targets:
 
 ```bash

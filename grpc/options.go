@@ -9,12 +9,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-)
 
-const (
-	defaultMaxMessageSize = 1024 * 1024
-	defaultMaxRecvSize    = 2 * 1024 * 1024
-	maxSafeMessageSize    = 10 * 1024 * 1024
+	"github.com/EnSync-engine/Go-SDK/common"
 )
 
 func parseGRPCURL(endpoint string) (host string, secure bool, err error) {
@@ -66,8 +62,8 @@ func getDialOptions(creds credentials.TransportCredentials) []grpc.DialOption {
 	return []grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(defaultMaxRecvSize),
-			grpc.MaxCallSendMsgSize(defaultMaxMessageSize),
+			grpc.MaxCallRecvMsgSize(common.MaxTransportSize),
+			grpc.MaxCallSendMsgSize(common.MaxTransportSize),
 		),
 	}
 }

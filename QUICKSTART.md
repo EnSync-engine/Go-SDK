@@ -58,7 +58,7 @@ defer engine.Close()
 
 ```go
 // Authenticate with EnSync protocol over the established connection
-err = engine.CreateClient("your-access-key")
+err = engine.CreateClient("access-key")
 if err != nil {
     log.Fatal(err)
 }
@@ -69,14 +69,14 @@ if err != nil {
 ### 4. Publish Events
 
 ```go
-eventName := "yourcompany/payment/created"
+eventName := "company/payment/created"
 recipients := []string{"recipient-public-key-base64"}
 payload := map[string]interface{}{
     "amount":   100,
     "currency": "USD",
 }
 
-metadata := &ensync.EventMetadata{
+metadata := &ensync.MessageMetadata{
     Persist: true,
     Headers: map[string]string{
         "source": "payment-service",
@@ -93,7 +93,7 @@ log.Printf("Published event: %s", eventID)
 ### 5. Subscribe to Events
 
 ```go
-subscription, err := engine.Subscribe("yourcompany/payment/created", &ensync.SubscribeOptions{
+subscription, err := engine.Subscribe("company/payment/created", &ensync.SubscribeOptions{
     AutoAck: true,
 })
 if err != nil {
@@ -102,7 +102,7 @@ if err != nil {
 defer subscription.Unsubscribe()
 
 // Register event handler
-removeHandler := subscription.AddHandler(func(event *ensync.EventPayload) error {
+removeHandler := subscription.AddHandler(func(event *ensync.MessagePayload) error {
     log.Printf("Received: %s", event.EventName)
     log.Printf("Data: %+v", event.Payload)
     return nil
@@ -154,7 +154,7 @@ func main() {
     defer subscription.Unsubscribe()
 
     // Handle events
-    subscription.AddHandler(func(event *ensync.EventPayload) error {
+    subscription.AddHandler(func(event *ensync.MessagePayload) error {
         log.Printf("Event: %s, Data: %+v", event.EventName, event.Payload)
         return nil
     })

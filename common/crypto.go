@@ -18,7 +18,7 @@ const (
 	keySize   = 32
 	nonceSize = 24
 
-	encryptionTypeHybrid = "hybrid"
+	EncryptionTypeHybrid = "hybrid"
 
 	ed25519PublicKeySize  = 32
 	ed25519PrivateKeySize = 64
@@ -167,7 +167,7 @@ func GenerateMessageKey() ([]byte, error) {
 	return key, nil
 }
 
-func EncryptWithMessageKey(message string, messageKey []byte) (*EncryptedSymmetric, error) {
+func encryptWithMessageKey(message string, messageKey []byte) (*EncryptedSymmetric, error) {
 	if len(messageKey) != keySize {
 		return nil, errors.New("invalid message key length")
 	}
@@ -189,7 +189,7 @@ func EncryptWithMessageKey(message string, messageKey []byte) (*EncryptedSymmetr
 	}, nil
 }
 
-func DecryptWithMessageKey(encrypted *EncryptedSymmetric, messageKey []byte) (string, error) {
+func decryptWithMessageKey(encrypted *EncryptedSymmetric, messageKey []byte) (string, error) {
 	if len(messageKey) != keySize {
 		return "", errors.New("invalid message key length")
 	}
@@ -218,7 +218,7 @@ func DecryptWithMessageKey(encrypted *EncryptedSymmetric, messageKey []byte) (st
 	return string(decrypted), nil
 }
 
-func EncryptMessageKey(messageKey, recipientEd25519PublicKey []byte) (*EncryptedMessage, error) {
+func encryptMessageKey(messageKey, recipientEd25519PublicKey []byte) (*EncryptedMessage, error) {
 	ephemeralPublic, ephemeralPrivate, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate ephemeral key: %w", err)
@@ -289,7 +289,7 @@ func HybridEncrypt(message string, recipientPublicKeys []string) (*HybridEncrypt
 		return nil, err
 	}
 
-	encryptedPayload, err := EncryptWithMessageKey(message, messageKey)
+	encryptedPayload, err := encryptWithMessageKey(message, messageKey)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func HybridEncrypt(message string, recipientPublicKeys []string) (*HybridEncrypt
 			return nil, fmt.Errorf("failed to decode public key: %w", err)
 		}
 
-		encKey, err := EncryptMessageKey(messageKey, publicKey)
+		encKey, err := encryptMessageKey(messageKey, publicKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encrypt message key: %w", err)
 		}
@@ -310,20 +310,20 @@ func HybridEncrypt(message string, recipientPublicKeys []string) (*HybridEncrypt
 	}
 
 	return &HybridEncryptedMessage{
-		Type:    encryptionTypeHybrid,
+		Type:    EncryptionTypeHybrid,
 		Payload: *encryptedPayload,
 		Keys:    encryptedKeys,
 	}, nil
 }
 
-func DecryptHybridMessage(hybridMsg *HybridEncryptedMessage, recipientSecretKey []byte) (string, error) {
+func decryptHybridMessage(hybridMsg *HybridEncryptedMessage, recipientSecretKey []byte) (string, error) {
 	for _, encKey := range hybridMsg.Keys {
 		messageKey, err := DecryptMessageKey(&encKey, recipientSecretKey)
 		if err != nil {
 			continue
 		}
 
-		decrypted, err := DecryptWithMessageKey(&hybridMsg.Payload, messageKey)
+		decrypted, err := decryptWithMessageKey(&hybridMsg.Payload, messageKey)
 		if err != nil {
 			continue
 		}
@@ -334,9 +334,9 @@ func DecryptHybridMessage(hybridMsg *HybridEncryptedMessage, recipientSecretKey 
 	return "", errors.New("failed to decrypt hybrid message with any of the recipient keys")
 }
 
-func ParseEncryptedPayload(payloadJSON string) (interface{}, error) {
+func parseEncryptedPayload(payloadJSON string) (interface{}, error) {
 	var hybridMsg HybridEncryptedMessage
-	if err := json.Unmarshal([]byte(payloadJSON), &hybridMsg); err == nil && hybridMsg.Type == encryptionTypeHybrid {
+	if err := json.Unmarshal([]byte(payloadJSON), &hybridMsg); err == nil && hybridMsg.Type == EncryptionTypeHybrid {
 		return &hybridMsg, nil
 	}
 
@@ -348,31 +348,53 @@ func ParseEncryptedPayload(payloadJSON string) (interface{}, error) {
 	return &encMsg, nil
 }
 
-// GenerateEd25519KeyPair generates a new Ed25519 key pair using the standard library
-func GenerateEd25519KeyPair() (publicKey, privateKey []byte, err error) {
+func generateEd25519KeyPair() (publicKey, privateKey []byte, err error) {
 	return ed25519.GenerateKey(rand.Reader)
 }
 
-// GenerateEd25519KeyPairBase64 generates a new Ed25519 key pair and returns base64-encoded strings
-func GenerateEd25519KeyPairBase64() (publicKey, privateKey string, err error) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return "", "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(pub),
-		base64.StdEncoding.EncodeToString(priv),
-		nil
-}
-
-// ValidateEd25519KeyPair checks if a public/private key pair is valid
 func ValidateEd25519KeyPair(publicKey, privateKey []byte) bool {
 	if len(publicKey) != ed25519PublicKeySize || len(privateKey) != ed25519PrivateKeySize {
 		return false
 	}
 
-	// Test by signing and verifying a message
 	testMessage := []byte("key pair validation test")
 	signature := ed25519.Sign(privateKey, testMessage)
 	return ed25519.Verify(publicKey, testMessage, signature)
+}
+
+// EncryptPayload handles encryption based on the mode and returns base64-encoded result.
+// If useHybrid is true, encrypts using hybrid encryption for the given recipient.
+// Otherwise uses individual Ed25519 encryption.
+func EncryptPayload(payloadJSON []byte, recipient string, useHybrid bool) (string, error) {
+	if useHybrid {
+		hybridMsg, err := HybridEncrypt(string(payloadJSON), []string{recipient})
+		if err != nil {
+			return "", NewEnSyncError("hybrid encryption failed", ErrTypePublish, err)
+		}
+
+		hybridJSON, err := json.Marshal(hybridMsg)
+		if err != nil {
+			return "", NewEnSyncError("failed to marshal hybrid message", ErrTypePublish, err)
+		}
+
+		return base64.StdEncoding.EncodeToString(hybridJSON), nil
+	}
+
+	// Individual encryption
+	recipientPubKey, err := base64.StdEncoding.DecodeString(recipient)
+	if err != nil {
+		return "", NewEnSyncError("invalid recipient public key format", ErrTypePublish, err)
+	}
+
+	encrypted, err := EncryptEd25519(string(payloadJSON), recipientPubKey)
+	if err != nil {
+		return "", NewEnSyncError("encryption failed", ErrTypePublish, err)
+	}
+
+	encryptedJSON, err := json.Marshal(encrypted)
+	if err != nil {
+		return "", NewEnSyncError("failed to marshal encrypted message", ErrTypePublish, err)
+	}
+
+	return base64.StdEncoding.EncodeToString(encryptedJSON), nil
 }

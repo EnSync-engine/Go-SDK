@@ -18,7 +18,7 @@ func main() {
 	}
 
 	// Create and authenticate client
-	err = engine.CreateClient("your-access-key")
+	err = engine.CreateClient("access-key")
 	if err != nil {
 		log.Printf("Failed to subscribe: %v", err)
 		return
@@ -31,7 +31,7 @@ func main() {
 	}()
 
 	// Prepare event data
-	eventName := "yourcompany/payment/POS/PAYMENT_SUCCESSFUL"
+	eventName := "company/payment/POS/PAYMENT_SUCCESSFUL"
 	recipients := []string{"recipient-public-key-base64"}
 	payload := map[string]interface{}{
 		"transactionId": "123",
@@ -48,7 +48,7 @@ func main() {
 	}
 
 	// Publish event
-	eventID, err := engine.Publish(eventName, recipients, payload, metadata, nil)
+	eventID, err := engine.Publish(ctx, eventName, recipients, payload, metadata, nil)
 	if err != nil {
 		log.Printf("Failed to publish event: %v", err)
 		return

@@ -25,7 +25,7 @@ type retryConfig struct {
 
 func defaultRetryConfig() *retryConfig {
 	return &retryConfig{
-		MaxAttempts:    3,
+		MaxAttempts:    defaultMaxRetries,
 		InitialBackoff: 100 * time.Millisecond,
 		MaxBackoff:     5 * time.Second,
 		Jitter:         0.2,
@@ -58,13 +58,11 @@ func (b *BaseEngine) Retry(ctx context.Context, fn func() error, cfg *retryConfi
 		}
 		lastErr = err
 
-		// Don't retry non-retryable errors
 		if !isRetryableError(err) {
 			b.recordFailure()
 			return err
 		}
 
-		// Check max attempts
 		if attempt >= cfg.MaxAttempts {
 			b.recordFailure()
 			return NewEnSyncError(
@@ -74,15 +72,12 @@ func (b *BaseEngine) Retry(ctx context.Context, fn func() error, cfg *retryConfi
 			)
 		}
 
-		// Calculate backoff with jitter
 		backoff := b.calculateBackoff(cfg, attempt)
 
-		// Wait or return if context is done
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(backoff):
-			// Continue to next attempt
 		}
 	}
 }

@@ -1,9 +1,14 @@
 package common
 
 import (
-	"context"
 	"encoding/json"
 	"time"
+)
+
+const (
+	MaxPayloadSize = 4 * 1024 * 1024
+
+	MaxTransportSize = 6 * 1024 * 1024
 )
 
 // MessageMetadata represents metadata for a message
@@ -21,7 +26,7 @@ type MessagePayload struct {
 	Timestamp   int64                  `json:"timestamp"`
 	Payload     map[string]interface{} `json:"payload"`
 	Sender      string                 `json:"sender"`
-	Metadata    map[string]interface{} `json:"metadata"`
+	Metadata    MessageMetadata        `json:"metadata"`
 }
 
 // PublishOptions contains options for publishing events
@@ -85,12 +90,11 @@ type MessageHandler func(ctx *MessageContext)
 
 // Subscription represents an active subscription to an event
 type Subscription interface {
-	// AddMessageHandler registers a message handler for this subscription (message-based API)
+	// AddMessageHandler registers a message handler
 	AddMessageHandler(handler MessageHandler) func()
 
-	// Ack acknowledges an event
-	// Parameters: eventName, eventIdem, block
-	Ack(eventName string, eventIdem string, block int64) error
+	// Ack acknowledges a message
+	Ack(messageID string, block int64) error
 
 	// Resume resumes event processing
 	Resume() error
@@ -114,40 +118,7 @@ type Subscription interface {
 	Unsubscribe() error
 }
 
-// Engine is the main interface for EnSync clients
-type Engine interface {
-	// CreateClient creates and authenticates a new client
-	CreateClient(accessKey string) error
-
-	// Publish publishes an event to the EnSync system
-	Publish(
-		eventName string,
-		recipients []string,
-		payload map[string]interface{},
-		metadata *MessageMetadata,
-		options *PublishOptions,
-	) (string, error)
-
-	// Subscribe subscribes to an event
-	Subscribe(eventName string, options *SubscribeOptions) (Subscription, error)
-
-	// Close closes the connection
-	Close() error
-
-	// GetClientPublicKey returns the client's public key
-	GetClientPublicKey() string
-
-	// AnalyzePayload analyzes a payload and returns metadata
-	AnalyzePayload(payload map[string]interface{}) *PayloadMetadata
-
-	// Context returns the engine's context
-	Context() context.Context
-
-	// Logger returns the engine's logger
-	Logger() Logger
-}
-
-func AnalyzePayload(payload map[string]interface{}) *PayloadMetadata {
+func analyzePayload(payload map[string]interface{}) *PayloadMetadata {
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return &PayloadMetadata{

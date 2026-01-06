@@ -37,10 +37,10 @@ type circuitBreakerConfig struct {
 
 func defaultCircuitBreakerConfig() *circuitBreakerConfig {
 	return &circuitBreakerConfig{
-		FailureThreshold: 5,
-		SuccessThreshold: 3,
+		FailureThreshold: circuitBreakerThreshold,
+		SuccessThreshold: circuitBreakerHalfOpenRequests,
 		ResetTimeout:     5 * time.Second,
-		MaxResetTimeout:  60 * time.Second,
+		MaxResetTimeout:  circuitBreakerTimeout * time.Second,
 	}
 }
 
@@ -89,10 +89,9 @@ func (cb *circuitBreaker) RecordFailure() {
 	defer cb.mu.Unlock()
 
 	cb.failures++
-	cb.successes = 0 // Reset success counter on failure
+	cb.successes = 0
 	cb.lastFailureTime = time.Now()
 
-	// Check if we should open the circuit
 	if cb.failures >= cb.config.FailureThreshold && cb.state != circuitStateOpen {
 		prevState := cb.state
 		cb.state = circuitStateOpen
@@ -124,7 +123,6 @@ func (cb *circuitBreaker) RecordSuccess() {
 		}
 
 	case circuitStateOpen:
-		// First success after timeout, move to half-open
 		cb.state = circuitStateHalfOpen
 		cb.successes = 1
 
@@ -170,15 +168,7 @@ func (cb *circuitBreaker) canAttempt() bool {
 			return true
 		}
 
-		// Still in open state
 		cb.mu.RUnlock()
-
-		if cb.logger != nil {
-			cb.logger.Debug("Circuit breaker blocked",
-				"state", "open",
-				"time_remaining", resetTimeout-timeSinceFailure,
-				"failures", cb.failures)
-		}
 		return false
 
 	default:

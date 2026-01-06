@@ -3,11 +3,11 @@ package common
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type engineState struct {
-	Mu              sync.RWMutex
 	IsConnected     bool
 	IsAuthenticated bool
 }
@@ -53,8 +53,7 @@ func (b *BaseEngineBuilder) Build(ctx context.Context) (*BaseEngine, error) {
 	engine := &BaseEngine{
 		config:          b.config,
 		State:           engineState{},
-		Ctx:             ctx,
-		Logger:          b.config.logger,
+		logger:          b.config.logger,
 		SubscriptionMgr: newSubscriptionManager(),
 		retryConfig:     b.config.retryConfig,
 	}
@@ -67,19 +66,29 @@ func (b *BaseEngineBuilder) Build(ctx context.Context) (*BaseEngine, error) {
 }
 
 type BaseEngine struct {
-	AccessKey       string
-	appSecretKey    string
-	keyMu           sync.RWMutex
-	State           engineState
-	ClientID        string
-	Logger          Logger
-	ClientHash      string
+	// Configuration
+	config         *engineConfig
+	circuitBreaker *circuitBreaker
+	retryConfig    *retryConfig
+	logger         Logger
+
+	// State
+	stateMu      sync.RWMutex
+	State        engineState
+	closed       atomic.Bool
+	Reconnecting atomic.Bool
+	clientID     string
+	accessKey    string
+
+	// Context Management
+	Ctx           context.Context
+	ctxCancel     context.CancelFunc
+	sessionMu     sync.RWMutex
+	sessionCtx    context.Context
+	sessionCancel context.CancelFunc
+
+	// Subsystems
 	SubscriptionMgr *SubscriptionManager
-	Ctx             context.Context
-	ctxCancel       context.CancelFunc
-	config          *engineConfig
-	circuitBreaker  *circuitBreaker
-	retryConfig     *retryConfig
 }
 
 func NewBaseEngine(ctx context.Context, opts ...Option) (*BaseEngine, error) {
@@ -92,14 +101,55 @@ func NewBaseEngine(ctx context.Context, opts ...Option) (*BaseEngine, error) {
 	}
 
 	baseEngine.Ctx, baseEngine.ctxCancel = context.WithCancel(ctx)
+	baseEngine.ResetConnectionContext()
 
 	return baseEngine, nil
 }
 
-func (b *BaseEngine) GetAppSecretKey() string {
-	b.keyMu.RLock()
-	defer b.keyMu.RUnlock()
-	return b.appSecretKey
+// Connection Context Management
+
+func (b *BaseEngine) ResetConnectionContext() context.Context {
+	b.sessionMu.Lock()
+	defer b.sessionMu.Unlock()
+
+	if b.sessionCancel != nil {
+		b.sessionCancel()
+	}
+
+	b.sessionCtx, b.sessionCancel = context.WithCancel(b.Ctx)
+	return b.sessionCtx
+}
+
+func (b *BaseEngine) GetConnectionContext() context.Context {
+	b.sessionMu.RLock()
+	defer b.sessionMu.RUnlock()
+	return b.sessionCtx
+}
+
+func (b *BaseEngine) CancelConnectionContext() {
+	b.sessionMu.RLock()
+	defer b.sessionMu.RUnlock()
+	if b.sessionCancel != nil {
+		b.sessionCancel()
+	}
+}
+
+func (b *BaseEngine) GetAccessKey() string {
+	b.stateMu.RLock()
+	defer b.stateMu.RUnlock()
+	return b.accessKey
+}
+
+func (b *BaseEngine) SetAccessKey(key string) {
+	b.stateMu.Lock()
+	defer b.stateMu.Unlock()
+	b.accessKey = key
+}
+
+func (b *BaseEngine) GetClientID() string {
+	b.stateMu.RLock()
+	defer b.stateMu.RUnlock()
+	return b.clientID
 }
 
 func (b *BaseEngine) recordFailure() {
@@ -111,8 +161,8 @@ func (b *BaseEngine) recordFailure() {
 	b.circuitBreaker.RecordFailure()
 	newState := b.circuitBreaker.state
 
-	if oldState != newState && b.Logger != nil {
-		b.Logger.Info("Circuit breaker state changed",
+	if oldState != newState {
+		b.Logger().Info("Circuit breaker state changed",
 			"oldState", oldState,
 			"newState", newState,
 			"failures", b.circuitBreaker.failures)
@@ -128,8 +178,8 @@ func (b *BaseEngine) recordSuccess() {
 	b.circuitBreaker.RecordSuccess()
 	newState := b.circuitBreaker.state
 
-	if oldState != newState && b.Logger != nil {
-		b.Logger.Info("Circuit breaker state changed",
+	if oldState != newState {
+		b.Logger().Info("Circuit breaker state changed",
 			"oldState", oldState,
 			"newState", newState)
 	}
@@ -143,39 +193,34 @@ func (b *BaseEngine) canAttemptConnection() bool {
 }
 
 func (e *BaseEngine) IsConnected() bool {
-	e.State.Mu.RLock()
-	defer e.State.Mu.RUnlock()
+	e.stateMu.RLock()
+	defer e.stateMu.RUnlock()
 	return e.State.IsConnected && e.State.IsAuthenticated
 }
 
-func (e *BaseEngine) GetClientID() string {
-	return e.ClientID
-}
+func (e *BaseEngine) SetAuthenticated(clientID string) {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
 
-func (e *BaseEngine) SetAuthenticated(clientID, clientHash string) {
-	e.ClientID = clientID
-	e.ClientHash = clientHash
-
-	e.State.Mu.Lock()
+	e.clientID = clientID
 	e.State.IsAuthenticated = true
 	e.State.IsConnected = true
-	e.State.Mu.Unlock()
 }
 
 func (e *BaseEngine) SetConnectionState(connected bool) {
-	e.State.Mu.Lock()
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
 	e.State.IsConnected = connected
 	if !connected {
 		e.State.IsAuthenticated = false
 	}
-	e.State.Mu.Unlock()
 }
 
 func (e *BaseEngine) ResetState() {
-	e.State.Mu.Lock()
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
 	e.State.IsAuthenticated = false
 	e.State.IsConnected = false
-	e.State.Mu.Unlock()
 
 	if e.ctxCancel != nil {
 		e.ctxCancel()
@@ -198,8 +243,8 @@ func (e *BaseEngine) GetGracefulShutdownTimeout() time.Duration {
 	return e.config.timeoutConfig.GracefulShutdownTimeout
 }
 
-func (e *BaseEngine) GetPublishConcurrency() int {
-	return e.config.concurrencyConfig.PublishConcurrency
+func (e *BaseEngine) GetConcurrencyCount() int {
+	return e.config.concurrencyConfig.ConcurrencyCount
 }
 
 func (e *BaseEngine) GetRecvBufferSize() int {
@@ -210,6 +255,59 @@ func (e *BaseEngine) GetRecvTimeout() time.Duration {
 	return e.config.concurrencyConfig.RecvTimeout
 }
 
-func (e *BaseEngine) GetCleanupDelay() time.Duration {
-	return e.config.concurrencyConfig.CleanupDelay
+func (e *BaseEngine) GetSubscriptionWorkerCount() int {
+	return e.config.concurrencyConfig.SubscriptionWorkerCount
+}
+
+func (e *BaseEngine) IsClosed() bool {
+	return e.closed.Load()
+}
+
+func (e *BaseEngine) Logger() Logger {
+	return e.logger
+}
+
+func (e *BaseEngine) Context() context.Context {
+	return e.Ctx
+}
+
+type ReconnectConfig struct {
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+}
+
+func DefaultReconnectConfig() ReconnectConfig {
+	return ReconnectConfig{
+		InitialBackoff: initialReconnectDelay * time.Second,
+		MaxBackoff:     maxReconnectDelay * time.Second,
+	}
+}
+
+func (e *BaseEngine) ReconnectLoop(cfg ReconnectConfig, beforeAttempt func(), attemptFn func() error) {
+	backoff := cfg.InitialBackoff
+
+	for {
+		if e.closed.Load() {
+			return
+		}
+
+		if beforeAttempt != nil {
+			beforeAttempt()
+		}
+
+		if err := attemptFn(); err == nil {
+			e.Logger().Info("Reconnection successful")
+			return
+		} else {
+			e.Logger().Error("Reconnection failed", "error", err, "retry_in", backoff)
+			e.SetConnectionState(false)
+		}
+
+		select {
+		case <-time.After(backoff):
+			backoff = min(backoff*reconnectBackoffMultiplier, cfg.MaxBackoff)
+		case <-e.Ctx.Done():
+			return
+		}
+	}
 }
