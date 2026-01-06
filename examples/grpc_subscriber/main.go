@@ -17,13 +17,15 @@ func main() {
 	// Create engine - this establishes the gRPC connection
 	engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051")
 	if err != nil {
-		log.Fatalf("Failed to create engine: %v", err)
+		log.Printf("Failed to create engine: %v", err)
+		return
 	}
 
 	// Authenticate with EnSync protocol over the established gRPC connection
-	err = engine.CreateClient("your-access-key")
+	err = engine.CreateClient("access-key")
 	if err != nil {
-		log.Fatalf("Failed to authenticate client: %v", err)
+		log.Printf("Failed to authenticate client: %v", err)
+		return
 	}
 
 	// Set up cleanup after all potential fatal errors
@@ -36,17 +38,16 @@ func main() {
 	// Subscribe to event
 	subscription, err := engine.Subscribe("test-event", &common.SubscribeOptions{
 		AutoAck:      true,
-		AppSecretKey: "your-app-secret-key",
+		AppSecretKey: "app-secret-key",
 	})
 	if err != nil {
-		log.Fatalf("Subscribe failed: %v", err)
+		log.Printf("Subscribe failed: %v", err)
+		return
 	}
 
 	// Register event handler
 	subscription.AddMessageHandler(func(ctx *common.MessageContext) {
 		processPaymentEvent(ctx.Message)
-
-		return
 	})
 
 	log.Println("Listening for events... Press Ctrl+C to exit")

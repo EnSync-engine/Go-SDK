@@ -65,53 +65,6 @@ func TestWithCircuitBreaker(t *testing.T) {
 	}
 }
 
-func TestWithRetryConfig(t *testing.T) {
-	config := &engineConfig{}
-	maxAttempts := 3
-	initialBackoff := time.Second
-	maxBackoff := 10 * time.Second
-	jitter := 0.1
-
-	option := WithRetryConfig(maxAttempts, initialBackoff, maxBackoff, jitter)
-	option(config)
-
-	if config.retryConfig == nil {
-		t.Fatal("Expected retryConfig to be initialized")
-	}
-
-	if config.retryConfig.MaxAttempts != maxAttempts {
-		t.Errorf("Expected MaxAttempts %d, got %d", maxAttempts, config.retryConfig.MaxAttempts)
-	}
-
-	if config.retryConfig.InitialBackoff != initialBackoff {
-		t.Errorf("Expected InitialBackoff %v, got %v", initialBackoff, config.retryConfig.InitialBackoff)
-	}
-
-	if config.retryConfig.MaxBackoff != maxBackoff {
-		t.Errorf("Expected MaxBackoff %v, got %v", maxBackoff, config.retryConfig.MaxBackoff)
-	}
-
-	if config.retryConfig.Jitter != jitter {
-		t.Errorf("Expected Jitter %f, got %f", jitter, config.retryConfig.Jitter)
-	}
-}
-
-func TestWithDefaultRetryConfig(t *testing.T) {
-	config := &engineConfig{}
-	option := WithDefaultRetryConfig()
-	option(config)
-
-	if config.retryConfig == nil {
-		t.Fatal("Expected retryConfig to be initialized")
-	}
-
-	defaultConfig := defaultRetryConfig()
-	if config.retryConfig.MaxAttempts != defaultConfig.MaxAttempts {
-		t.Errorf("Expected MaxAttempts %d, got %d", defaultConfig.MaxAttempts, config.retryConfig.MaxAttempts)
-	}
-}
-
-// Test logger implementation for testing
 type testLogger struct {
 	logs []string
 }

@@ -43,14 +43,14 @@ func main() {
     defer engine.Close()
 
     // Authenticate
-    err = engine.CreateClient("your-access-key")
+    err = engine.CreateClient("access-key")
     if err != nil {
         log.Fatal(err)
     }
 
     // Publish an event
     eventID, err := engine.Publish(
-        "yourcompany/payment/created",
+        "company/payment/created",
         []string{"recipient-public-key-base64"},
         map[string]interface{}{
             "amount": 100,
@@ -86,13 +86,13 @@ func main() {
     defer engine.Close()
 
     // Authenticate
-    err = engine.CreateClient("your-access-key")
+    err = engine.CreateClient("access-key")
     if err != nil {
         log.Fatal(err)
     }
 
     // Subscribe to events
-    subscription, err := engine.Subscribe("yourcompany/payment/created", &ensync.SubscribeOptions{
+    subscription, err := engine.Subscribe("company/payment/created", &ensync.SubscribeOptions{
         AutoAck: true,
     })
     if err != nil {
@@ -100,7 +100,7 @@ func main() {
     }
 
     // Register event handler
-    subscription.AddHandler(func(event *ensync.EventPayload) error {
+    subscription.AddHandler(func(event *ensync.MessagePayload) error {
         log.Printf("Received: %+v", event.Payload)
         return nil
     })
@@ -159,7 +159,7 @@ eventID, err := engine.Publish(
     eventName string,                      // Event name
     recipients []string,                   // Recipient public keys (base64)
     payload map[string]interface{},        // Event payload
-    metadata *ensync.EventMetadata,        // Optional metadata
+    metadata *ensync.MessageMetadata,        // Optional metadata
     options *ensync.PublishOptions,        // Optional publish options
 )
 ```
@@ -167,7 +167,7 @@ eventID, err := engine.Publish(
 **Example:**
 
 ```go
-metadata := &ensync.EventMetadata{
+metadata := &ensync.MessageMetadata{
     Persist: true,
     Headers: map[string]string{
         "source": "payment-service",
@@ -213,7 +213,7 @@ options := &ensync.SubscribeOptions{
 
 ```go
 // Register a handler
-unsubscribe := subscription.AddHandler(func(event *ensync.EventPayload) error {
+unsubscribe := subscription.AddHandler(func(event *ensync.MessagePayload) error {
     log.Printf("Event: %s", event.EventName)
     log.Printf("ID: %s", event.Idem)
     log.Printf("Block: %d", event.Block)
@@ -298,13 +298,13 @@ err := engine.Close()
 ## Event Structure
 
 ```go
-type EventPayload struct {
+type MessagePayload struct {
     EventName string                 // Event name
     Idem      string                 // Unique event ID
     Block     int64                  // Block ID for acknowledgment
     Timestamp time.Time              // Event timestamp
     Payload   map[string]interface{} // Event data
-    Metadata  map[string]interface{} // Event metadata
+    Metadata  ensync.MessageMetadata // Event metadata
     Sender    string                 // Sender client ID
 }
 ```
@@ -365,12 +365,12 @@ func main() {
     }
     defer engine.Close()
 
-    err = engine.CreateClient("your-access-key")
+    err = engine.CreateClient("access-key")
     if err != nil {
         log.Fatal(err)
     }
 
-    eventName := "yourcompany/payment/POS/PAYMENT_SUCCESSFUL"
+    eventName := "company/payment/POS/PAYMENT_SUCCESSFUL"
     recipients := []string{"recipient-public-key-base64"}
     
     payload := map[string]interface{}{
@@ -410,12 +410,12 @@ func main() {
     }
     defer engine.Close()
 
-    err = engine.CreateClient("your-access-key")
+    err = engine.CreateClient("access-key")
     if err != nil {
         log.Fatal(err)
     }
 
-    eventName := "yourcompany/payment/POS/PAYMENT_SUCCESSFUL"
+    eventName := "company/payment/POS/PAYMENT_SUCCESSFUL"
     subscription, err := engine.Subscribe(eventName, &ensync.SubscribeOptions{
         AutoAck: false, // Manual acknowledgment
     })
@@ -423,7 +423,7 @@ func main() {
         log.Fatal(err)
     }
 
-    subscription.AddHandler(func(event *ensync.EventPayload) error {
+    subscription.AddHandler(func(event *ensync.MessagePayload) error {
         log.Printf("Event ID: %s", event.Idem)
         log.Printf("Event Block: %d", event.Block)
         log.Printf("Event Data: %+v", event.Payload)
@@ -510,8 +510,8 @@ engine, err := ensync.NewWebSocketEngine(ctx, "ws://localhost:8082",
 When creating a client, you can pass additional options:
 
 ```go
-err = engine.CreateClient("your-access-key",
-    common.WithAppSecretKey("your-app-secret-key"),
+err = engine.CreateClient("access-key",
+    common.WithAppSecretKey("app-secret-key"),
     common.WithClientID("custom-client-id"),
 )
 ```
@@ -545,7 +545,7 @@ eventName := "domain/entity/action"
 ### Error Handling
 
 ```go
-subscription.AddHandler(func(event *ensync.EventPayload) error {
+subscription.AddMessageHandler(func(event *ensync.MessagePayload) error {
     if err := processEvent(event); err != nil {
         log.Printf("Processing error: %v", err)
         

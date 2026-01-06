@@ -2,7 +2,6 @@ package common
 
 import "time"
 
-// TimeoutConfig holds timeout-related settings for the engine
 type TimeoutConfig struct {
 	OperationTimeout        time.Duration
 	GracefulShutdownTimeout time.Duration
@@ -10,7 +9,6 @@ type TimeoutConfig struct {
 	ConnectionTimeout       time.Duration
 }
 
-// DefaultTimeoutConfig returns sensible default timeout values
 func defaultTimeoutConfig() *TimeoutConfig {
 	return &TimeoutConfig{
 		OperationTimeout:        5 * time.Second,
@@ -21,18 +19,20 @@ func defaultTimeoutConfig() *TimeoutConfig {
 }
 
 type ConcurrencyConfig struct {
-	PublishConcurrency int
-	RecvBufferSize     int
-	RecvTimeout        time.Duration
-	CleanupDelay       time.Duration
+	ConcurrencyCount        int
+	RecvBufferSize          int
+	RecvTimeout             time.Duration
+	CleanupDelay            time.Duration
+	SubscriptionWorkerCount int
 }
 
 func defaultConcurrencyConfig() *ConcurrencyConfig {
 	return &ConcurrencyConfig{
-		PublishConcurrency: 10,
-		RecvBufferSize:     100,
-		RecvTimeout:        100 * time.Millisecond,
-		CleanupDelay:       100 * time.Millisecond,
+		ConcurrencyCount:        10,
+		RecvBufferSize:          100,
+		RecvTimeout:             100 * time.Millisecond,
+		CleanupDelay:            100 * time.Millisecond,
+		SubscriptionWorkerCount: 10,
 	}
 }
 
@@ -64,7 +64,6 @@ func WithLogger(logger Logger) Option {
 	}
 }
 
-// WithCircuitBreaker sets the circuit breaker configuration
 func WithCircuitBreaker(threshold int, resetTimeout time.Duration) Option {
 	return func(c *engineConfig) {
 		c.circuitBreaker = &circuitBreakerConfig{
@@ -74,78 +73,51 @@ func WithCircuitBreaker(threshold int, resetTimeout time.Duration) Option {
 	}
 }
 
-// WithRetryConfig sets the retry configuration
-func WithRetryConfig(maxAttempts int, initialBackoff, maxBackoff time.Duration, jitter float64) Option {
+func WithTimeouts(cfg *TimeoutConfig) Option {
 	return func(c *engineConfig) {
-		c.retryConfig = &retryConfig{
-			MaxAttempts:    maxAttempts,
-			InitialBackoff: initialBackoff,
-			MaxBackoff:     maxBackoff,
-			Jitter:         jitter,
+		if cfg == nil {
+			return
 		}
-	}
-}
-
-// WithDefaultRetryConfig sets the default retry configuration
-func WithDefaultRetryConfig() Option {
-	return func(c *engineConfig) {
-		c.retryConfig = defaultRetryConfig()
-	}
-}
-
-// WithTimeoutOptions combines multiple timeout-related options into one.
-// Usage: common.WithTimeoutOptions(
-//
-//	common.WithOperationTimeout(5*time.Second),
-//	common.WithGracefulShutdownTimeout(10*time.Second),
-//	common.WithPingInterval(30*time.Second),
-//
-// )
-func WithTimeoutOptions(opts ...Option) Option {
-	return func(c *engineConfig) {
-		// Apply all provided options to configure timeouts
-		for _, opt := range opts {
-			opt(c)
-		}
-	}
-}
-
-// WithOperationTimeout sets the timeout for individual operations
-func WithOperationTimeout(timeout time.Duration) Option {
-	return func(c *engineConfig) {
 		if c.timeoutConfig == nil {
 			c.timeoutConfig = defaultTimeoutConfig()
 		}
-		c.timeoutConfig.OperationTimeout = timeout
+		if cfg.OperationTimeout != 0 {
+			c.timeoutConfig.OperationTimeout = cfg.OperationTimeout
+		}
+		if cfg.ConnectionTimeout != 0 {
+			c.timeoutConfig.ConnectionTimeout = cfg.ConnectionTimeout
+		}
+		if cfg.PingInterval != 0 {
+			c.timeoutConfig.PingInterval = cfg.PingInterval
+		}
+		if cfg.GracefulShutdownTimeout != 0 {
+			c.timeoutConfig.GracefulShutdownTimeout = cfg.GracefulShutdownTimeout
+		}
 	}
 }
 
-// WithGracefulShutdownTimeout sets the timeout for graceful shutdown
-func WithGracefulShutdownTimeout(timeout time.Duration) Option {
+func WithConcurrency(cfg *ConcurrencyConfig) Option {
 	return func(c *engineConfig) {
-		if c.timeoutConfig == nil {
-			c.timeoutConfig = defaultTimeoutConfig()
+		if cfg == nil {
+			return
 		}
-		c.timeoutConfig.GracefulShutdownTimeout = timeout
-	}
-}
-
-// WithPingInterval sets the interval between heartbeat pings
-func WithPingInterval(interval time.Duration) Option {
-	return func(c *engineConfig) {
-		if c.timeoutConfig == nil {
-			c.timeoutConfig = defaultTimeoutConfig()
+		if c.concurrencyConfig == nil {
+			c.concurrencyConfig = defaultConcurrencyConfig()
 		}
-		c.timeoutConfig.PingInterval = interval
-	}
-}
-
-// WithConnectionTimeout sets the timeout for connection operations
-func WithConnectionTimeout(timeout time.Duration) Option {
-	return func(c *engineConfig) {
-		if c.timeoutConfig == nil {
-			c.timeoutConfig = defaultTimeoutConfig()
+		if cfg.ConcurrencyCount > 0 {
+			c.concurrencyConfig.ConcurrencyCount = cfg.ConcurrencyCount
 		}
-		c.timeoutConfig.ConnectionTimeout = timeout
+		if cfg.RecvBufferSize > 0 {
+			c.concurrencyConfig.RecvBufferSize = cfg.RecvBufferSize
+		}
+		if cfg.RecvTimeout > 0 {
+			c.concurrencyConfig.RecvTimeout = cfg.RecvTimeout
+		}
+		if cfg.CleanupDelay > 0 {
+			c.concurrencyConfig.CleanupDelay = cfg.CleanupDelay
+		}
+		if cfg.SubscriptionWorkerCount > 0 {
+			c.concurrencyConfig.SubscriptionWorkerCount = cfg.SubscriptionWorkerCount
+		}
 	}
 }

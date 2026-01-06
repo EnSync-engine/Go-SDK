@@ -63,6 +63,16 @@ func (e *EnSyncError) Unwrap() error {
 }
 
 func NewEnSyncError(message, errType string, err error) *EnSyncError {
+	var e *EnSyncError
+	if errors.As(err, &e) {
+		// If the error is already an EnSyncError, preserve *its* type
+		// This prevents "PublishError" from masking "AuthError" or "TimeoutError"
+		return &EnSyncError{
+			Message: message,
+			Type:    e.Type,
+			Err:     err,
+		}
+	}
 	return &EnSyncError{
 		Message: message,
 		Type:    errType,

@@ -17,13 +17,15 @@ func main() {
 	// Create engine - this establishes the WebSocket connection
 	engine, err := ensync.NewWebSocketEngine(ctx, "ws://localhost:8080")
 	if err != nil {
-		log.Fatalf("Failed to create engine: %v", err)
+		log.Printf("Failed to create engine: %v", err)
+		return
 	}
 
 	// Authenticate with EnSync protocol over the established WebSocket
-	err = engine.CreateClient("your-access-key")
+	err = engine.CreateClient("access-key")
 	if err != nil {
-		log.Fatalf("Failed to authenticate client: %v", err)
+		log.Printf("Failed to authenticate client: %v", err)
+		return
 	}
 
 	// Set up cleanup after all potential fatal errors
@@ -38,7 +40,8 @@ func main() {
 		AutoAck: true,
 	})
 	if err != nil {
-		log.Fatalf("Failed to subscribe: %v", err)
+		log.Printf("Failed to subscribe: %v", err)
+		return
 	}
 
 	// Register event handler

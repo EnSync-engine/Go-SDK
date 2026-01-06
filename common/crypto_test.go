@@ -347,7 +347,7 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Errorf("Expected 2 encrypted keys, got %d", len(hybridMsg.Keys))
 	}
 
-	decrypted1, err := DecryptHybridMessage(hybridMsg, ed25519PrivateKey1)
+	decrypted1, err := decryptHybridMessage(hybridMsg, ed25519PrivateKey1)
 	if err != nil {
 		t.Fatalf("Failed to decrypt hybrid message with key 1: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestHybridEncryptDecrypt(t *testing.T) {
 		t.Errorf("Expected decrypted message %q, got %q", message, decrypted1)
 	}
 
-	decrypted2, err := DecryptHybridMessage(hybridMsg, ed25519PrivateKey2)
+	decrypted2, err := decryptHybridMessage(hybridMsg, ed25519PrivateKey2)
 	if err != nil {
 		t.Fatalf("Failed to decrypt hybrid message with key 2: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestDecryptHybridMessageNoValidKeys(t *testing.T) {
 	}
 
 	// Try to decrypt with our private key (should fail)
-	_, err = DecryptHybridMessage(hybridMsg, ed25519PrivateKey)
+	_, err = decryptHybridMessage(hybridMsg, ed25519PrivateKey)
 	if err == nil {
 		t.Error("Expected error when no valid keys available, got nil")
 	}
@@ -429,7 +429,7 @@ func TestParseEncryptedPayload(t *testing.T) {
 		t.Fatalf("Failed to marshal hybrid message: %v", err)
 	}
 
-	parsed, err := ParseEncryptedPayload(string(hybridJSON))
+	parsed, err := parseEncryptedPayload(string(hybridJSON))
 	if err != nil {
 		t.Fatalf("Failed to parse hybrid payload: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestParseEncryptedPayload(t *testing.T) {
 		t.Fatalf("Failed to marshal encrypted message: %v", err)
 	}
 
-	parsed, err = ParseEncryptedPayload(string(encJSON))
+	parsed, err = parseEncryptedPayload(string(encJSON))
 	if err != nil {
 		t.Fatalf("Failed to parse encrypted payload: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestParseEncryptedPayload(t *testing.T) {
 	}
 
 	// Test parsing invalid JSON
-	_, err = ParseEncryptedPayload("invalid-json")
+	_, err = parseEncryptedPayload("invalid-json")
 	if err == nil {
 		t.Error("Expected error for invalid JSON, got nil")
 	}

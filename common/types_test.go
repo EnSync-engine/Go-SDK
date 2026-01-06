@@ -45,10 +45,10 @@ func TestAnalyzePayload(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := AnalyzePayload(tt.payload)
+			result := analyzePayload(tt.payload)
 
 			if result == nil {
-				t.Fatal("AnalyzePayload returned nil")
+				t.Fatal("analyzePayload returned nil")
 			}
 
 			if result.ByteSize <= 0 {
@@ -71,10 +71,10 @@ func TestAnalyzePayload(t *testing.T) {
 }
 
 func TestAnalyzePayloadEmptyPayload(t *testing.T) {
-	result := AnalyzePayload(map[string]interface{}{})
+	result := analyzePayload(map[string]interface{}{})
 
 	if result == nil {
-		t.Fatal("AnalyzePayload returned nil")
+		t.Fatal("analyzePayload returned nil")
 	}
 
 	if result.ByteSize <= 0 {
@@ -94,9 +94,11 @@ func TestMessagePayloadStructure(t *testing.T) {
 		Block:       123,
 		Timestamp:   now.Unix(),
 		Payload:     map[string]interface{}{"test": "data"},
-		Metadata: map[string]interface{}{
-			"persist": true,
-			"headers": map[string]interface{}{"source": "test"},
+		Metadata: MessageMetadata{
+			Persist: true,
+			Headers: map[string]string{
+				"source": "test",
+			},
 		},
 		Sender: "test-sender",
 	}

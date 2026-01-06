@@ -132,16 +132,16 @@ func TestGRPCClientWithSimpleMockServer(t *testing.T) {
 		},
 	}
 
-	eventID, err := engine.Publish(eventName, recipients, payload, metadata, nil)
+	messageIds, err := engine.Publish(context.Background(), eventName, recipients, payload, metadata, nil)
 	if err != nil {
 		t.Fatalf("Failed to publish event: %v", err)
 	}
 
-	if eventID == "" {
-		t.Error("Expected non-empty event ID")
+	if len(messageIds) == 0 {
+		t.Error("Expected non-empty message ID")
 	}
 
-	t.Logf("Published event: %s", eventID)
+	t.Logf("Published event: %s", messageIds)
 }
 
 func TestGRPCEngineConnectionAndAuth(t *testing.T) {
@@ -168,9 +168,9 @@ func TestGRPCEngineConnectionAndAuth(t *testing.T) {
 	}
 
 	// Verify engine state
-	if engine.ClientID == "" {
+	if engine.GetClientID() == "" {
 		t.Error("Expected ClientID to be set after authentication")
 	}
 
-	t.Logf("Authentication successful, ClientID: %s", engine.ClientID)
+	t.Logf("Authentication successful, ClientID: %s", engine.GetClientID())
 }

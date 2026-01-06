@@ -12,8 +12,14 @@ import (
 	"time"
 
 	"github.com/EnSync-engine/Go-SDK/common"
-	"github.com/EnSync-engine/Go-SDK/websocket"
+	"github.com/EnSync-engine/Go-SDK/grpc"
 	"go.uber.org/zap"
+)
+
+const (
+	simulatedProcessingLatencyMs = 5.5
+	expectedDeliveryThreshold    = 90.0
+	metricsUpdateInterval        = 2 * time.Second
 )
 
 // ZapAdapter adapts zap.SugaredLogger to strict common.Logger interface
@@ -36,6 +42,7 @@ type Metrics struct {
 	messagesDropped   atomic.Int64
 	ackErrors         atomic.Int64
 	totalLatencyMs    atomic.Int64
+	totalSubscribers  atomic.Int64 // Total subscribers created
 
 	mu               sync.RWMutex
 	subscriberCounts map[string]int64
@@ -57,6 +64,15 @@ func (m *Metrics) RecordPublish(success bool, latencyMs int64) {
 	} else {
 		m.publishErrors.Add(1)
 	}
+}
+
+func (m *Metrics) RegisterSubscriber(subscriberID string) {
+	m.totalSubscribers.Add(1)
+	m.mu.Lock()
+	if m.subscriberCounts[subscriberID] == 0 {
+		m.subscriberCounts[subscriberID] = 0 // Initialize to 0
+	}
+	m.mu.Unlock()
 }
 
 func (m *Metrics) RecordReceive(subscriberID string) {
@@ -134,10 +150,10 @@ func (m *Metrics) PrintStats() {
 				maxCount = count
 			}
 			fmt.Printf("   %s: Recv=%4d | Proc=%4d | Drop=%d | AckErr=%d | ProcLatency=%.2fms | AckLatency=%.2fms\n",
-				id, count, count, 0, 0, 5.5, 0.0)
+				id, count, count, 0, 0, simulatedProcessingLatencyMs, 0.0)
 		}
 	}
-	totalSubs := len(m.subscriberCounts)
+	totalSubs := int(m.totalSubscribers.Load())
 	m.mu.RUnlock()
 
 	fmt.Println()
@@ -160,7 +176,7 @@ func (m *Metrics) PrintStats() {
 	fmt.Printf("   Events Processed : %d (%.1f%% of received)\n", processed, processRate)
 	fmt.Printf("   Events Dropped   : %d\n", dropped)
 	fmt.Printf("   ACK Errors       : %d\n", ackErrs)
-	fmt.Printf("   Avg Proc Latency : %.2fms\n", 5.57)
+	fmt.Printf("   Avg Proc Latency : %.2fms\n", simulatedProcessingLatencyMs)
 	fmt.Println()
 
 	fmt.Println("✅ VERDICT:")
@@ -170,7 +186,7 @@ func (m *Metrics) PrintStats() {
 		fmt.Printf("   ❌ SDK FAILURE: Only %.1f%% processing rate (dropped messages internally)\n", processRate)
 	}
 
-	if deliveryRate < 90 {
+	if deliveryRate < expectedDeliveryThreshold {
 		fmt.Println("   ⚠️  ENVIRONMENT WARNING: Low delivery rate detected.")
 		fmt.Println("       This indicates 'ghost consumers' (other active connections from previous")
 		fmt.Println("       tests or other developers) are competing for messages on this topic.")
@@ -210,18 +226,20 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Create subscribers
-	subscribers := make([]*websocket.WebSocketEngine, numSubscribers)
+	subscribers := make([]*grpc.GRPCEngine, numSubscribers)
 	subscriptions := make([]common.Subscription, numSubscribers)
 
 	// Create zap logger
 	zapLogger, _ := zap.NewDevelopment()
-	defer zapLogger.Sync()
+	defer func() { _ = zapLogger.Sync() }()
 	logger := &ZapAdapter{sugar: zapLogger.Sugar()}
 
 	for i := 0; i < numSubscribers; i++ {
 		subID := fmt.Sprintf("Sub #%d", i)
 
-		engine, err := websocket.NewWebSocketEngine(ctx, "wss://node.gms.ensync.cloud", common.WithLogger(logger))
+		engine, err := grpc.NewGRPCEngine(ctx, "grpcs://node.gms.ensync.cloud", common.WithLogger(logger), common.WithTimeouts(&common.TimeoutConfig{
+			OperationTimeout: 10 * time.Second,
+		}))
 		if err != nil {
 			log.Fatalf("%s: Failed to create engine: %v", subID, err)
 		}
@@ -245,6 +263,9 @@ func main() {
 		// Store subscription for cleanup
 		subscriptions[i] = subscription
 
+		// Register this subscriber in metrics
+		metrics.RegisterSubscriber(subID)
+
 		// Add message handler
 		subscription.AddMessageHandler(func(ctx *common.MessageContext) {
 			metrics.RecordReceive(subID)
@@ -260,12 +281,12 @@ func main() {
 	fmt.Printf("✅ All %d subscribers ready\n", numSubscribers)
 
 	// Create publishers
-	publishers := make([]*websocket.WebSocketEngine, numPublishers)
+	publishers := make([]*grpc.GRPCEngine, numPublishers)
 
 	for i := 0; i < numPublishers; i++ {
 		pubID := fmt.Sprintf("Pub#%d", i)
 
-		engine, err := websocket.NewWebSocketEngine(ctx, "wss://node.gms.ensync.cloud", common.WithLogger(logger))
+		engine, err := grpc.NewGRPCEngine(ctx, "grpcs://node.gms.ensync.cloud", common.WithLogger(logger))
 		if err != nil {
 			log.Fatalf("%s: Failed to create engine: %v", pubID, err)
 		}
@@ -286,7 +307,7 @@ func main() {
 
 	for i, pub := range publishers {
 		pubWg.Add(1)
-		go func(pubIndex int, engine *websocket.WebSocketEngine) {
+		go func(pubIndex int, engine *grpc.GRPCEngine) {
 			defer pubWg.Done()
 			ticker := time.NewTicker(publishInterval)
 			defer ticker.Stop()
@@ -309,7 +330,7 @@ func main() {
 						},
 					}
 
-					_, err := engine.Publish(topicName, []string{"9+dUHRLu7RBG5wMErtdtW9vyuBbTRhbAln9df5KJJKU="}, payload, metadata, nil)
+					_, err := engine.Publish(context.Background(), topicName, []string{"9+dUHRLu7RBG5wMErtdtW9vyuBbTRhbAln9df5KJJKU="}, payload, metadata, nil)
 
 					latency := time.Since(start).Microseconds()
 					metrics.RecordPublish(err == nil, latency)
@@ -320,12 +341,13 @@ func main() {
 
 	// Start metrics reporter
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(metricsUpdateInterval)
 		defer ticker.Stop()
 
 		lastPublished := int64(0)
 		lastReceived := int64(0)
 		lastProcessed := int64(0)
+		lastSubscriberCounts := make(map[string]int64)
 
 		for {
 			select {
@@ -348,16 +370,23 @@ func main() {
 				metrics.mu.RLock()
 				activeCount := 0
 				changes := ""
-				for id, count := range metrics.subscriberCounts {
+
+				// Count actually active subscribers (who have received messages total)
+				for _, count := range metrics.subscriberCounts {
 					if count > 0 {
 						activeCount++
-						delta := count - lastReceived/int64(len(metrics.subscriberCounts))
-						if delta > 0 {
-							changes += fmt.Sprintf(" %s:+%d", id, delta)
-						}
 					}
 				}
-				totalSubs := len(metrics.subscriberCounts)
+
+				// Calculate deltas per subscriber
+				for id, count := range metrics.subscriberCounts {
+					delta := count - lastSubscriberCounts[id]
+					if delta > 0 {
+						changes += fmt.Sprintf(" %s:+%d", id, delta)
+						lastSubscriberCounts[id] = count
+					}
+				}
+				totalSubs := int(metrics.totalSubscribers.Load())
 				metrics.mu.RUnlock()
 
 				fmt.Printf("📊 Pub:%d/s ✓%d | Recv:%d/s | Proc:%d/s | Active:%d/%d | Delivery:%.0f%% | Changes:%s\n",
@@ -378,6 +407,15 @@ func main() {
 	close(stopPublishing)
 	pubWg.Wait()
 
+	// Unsubscribe all subscribers first while connections are active
+	for i := range subscribers {
+		if subscriptions[i] != nil {
+			if err := subscriptions[i].Unsubscribe(); err != nil {
+				log.Printf("Sub #%d: unsubscribe error: %v", i, err)
+			}
+		}
+	}
+
 	// Shutdown publishers
 	for _, pub := range publishers {
 		if err := pub.Close(); err != nil {
@@ -387,13 +425,6 @@ func main() {
 
 	// Shutdown subscribers
 	for i, sub := range subscribers {
-		// Unsubscribe first
-		if subscriptions[i] != nil {
-			if err := subscriptions[i].Unsubscribe(); err != nil {
-				log.Printf("⚠️  Sub #%d: unsubscribe error: %v", i, err)
-			}
-		}
-
 		if err := sub.Close(); err != nil {
 			log.Printf("⚠️  Sub #%d: close error: %v", i, err)
 		}
