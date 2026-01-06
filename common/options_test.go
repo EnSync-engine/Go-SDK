@@ -48,8 +48,9 @@ func TestWithCircuitBreaker(t *testing.T) {
 	config := &engineConfig{}
 	threshold := 5
 	resetTimeout := 30 * time.Second
+	maxResetTimeout := 60 * time.Second
 
-	option := WithCircuitBreaker(threshold, resetTimeout)
+	option := WithCircuitBreaker(threshold, resetTimeout, maxResetTimeout)
 	option(config)
 
 	if config.circuitBreaker == nil {
@@ -62,6 +63,10 @@ func TestWithCircuitBreaker(t *testing.T) {
 
 	if config.circuitBreaker.ResetTimeout != resetTimeout {
 		t.Errorf("Expected ResetTimeout %v, got %v", resetTimeout, config.circuitBreaker.ResetTimeout)
+	}
+
+	if config.circuitBreaker.MaxResetTimeout != maxResetTimeout {
+		t.Errorf("Expected MaxResetTimeout %v, got %v", maxResetTimeout, config.circuitBreaker.MaxResetTimeout)
 	}
 }
 

@@ -473,13 +473,19 @@ import (
 )
 
 ctx := context.Background()
-engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051",    
-    // Circuit breaker settings
-    common.WithCircuitBreaker(5, 30 * time.Second), // 5 failures, 30s reset
+engine, err := ensync.NewGRPCEngine(ctx, "grpc://localhost:50051",
+    // Circuit breaker: 5 failures, 10s base reset, 60s max reset
+    common.WithCircuitBreaker(5, 10*time.Second, 60*time.Second),
     
-    // Retry configuration
-    common.WithRetryConfig(3, time.Second, 10 * time.Second, 0.1), // max attempts, initial backoff, max backoff, jitter
+    // Retry: 3 attempts, 1s initial backoff, 10s max backoff, 10% jitter
+    common.WithRetryConfig(3, time.Second, 10*time.Second, 0.1),
     
+    // Custom timeouts
+    common.WithTimeoutOptions(
+        common.WithOperationTimeout(15*time.Second),
+        common.WithGracefulShutdownTimeout(5*time.Second),
+    ),
+
     // Custom logger
     common.WithLogger(customLogger),
 )
